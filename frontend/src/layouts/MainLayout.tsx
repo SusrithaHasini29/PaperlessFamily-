@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import * as notificationService from '../services/notificationService';
+import * as documentService from '../services/documentService';
 import NotificationDropdown from '../components/NotificationDropdown';
 import toast from 'react-hot-toast';
 
@@ -36,6 +37,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [copiedCode, setCopiedCode] = useState(false);
   const [searchVal, setSearchVal] = useState('');
+  const [storageText, setStorageText] = useState('0 MB of 10 GB');
+  const [storagePercent, setStoragePercent] = useState(1);
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -50,13 +54,41 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       }
     };
 
+    const fetchStorage = async () => {
+      try {
+        const res = await documentService.getDocuments();
+        if (!isMounted) return;
+        const docs = res.data || [];
+        const totalBytes = docs.reduce((acc, d) => acc + (d.fileSize || 0), 0);
+        if (totalBytes === 0) {
+          setStorageText('0 MB of 10 GB');
+          setStoragePercent(1);
+        } else if (totalBytes < 1024 * 1024) {
+          setStorageText(`${(totalBytes / 1024).toFixed(1)} KB of 10 GB`);
+          setStoragePercent(Math.max(1, Math.round((totalBytes / (10 * 1024 * 1024 * 1024)) * 100)));
+        } else if (totalBytes < 1024 * 1024 * 1024) {
+          setStorageText(`${(totalBytes / (1024 * 1024)).toFixed(1)} MB of 10 GB`);
+          setStoragePercent(Math.max(1, Math.round((totalBytes / (10 * 1024 * 1024 * 1024)) * 100)));
+        } else {
+          setStorageText(`${(totalBytes / (1024 * 1024 * 1024)).toFixed(2)} GB of 10 GB`);
+          setStoragePercent(Math.max(1, Math.min(100, Math.round((totalBytes / (10 * 1024 * 1024 * 1024)) * 100))));
+        }
+      } catch {
+        if (isMounted) {
+          setStorageText('0 MB of 10 GB');
+          setStoragePercent(1);
+        }
+      }
+    };
+
     fetchUnread();
+    fetchStorage();
     const interval = setInterval(fetchUnread, 30000);
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, []);
+  }, [location.pathname]);
 
   const handleCopyFamilyCode = () => {
     if (family?.familyCode) {
@@ -168,20 +200,23 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           })}
         </nav>
 
-        {/* Bottom Sidebar: Storage Used card matching Image 2 */}
+        {/* Bottom Sidebar: Storage Used card */}
         <div className="p-3.5 border-t-2 border-black bg-cream">
           <div className="p-3 bg-white rounded-xl border-1.5 border-black shadow-neo-sm mb-3">
             <div className="text-[11px] font-bold text-gray-600 uppercase tracking-wider">
               Storage Used
             </div>
             <div className="text-xs font-black text-black mt-0.5">
-              2.4 GB of 10 GB
+              {storageText}
             </div>
             <div className="w-full h-2 bg-gray-200 rounded-full border border-black overflow-hidden mt-2">
-              <div className="h-full bg-lime w-1/4 rounded-full" />
+              <div
+                className="h-full bg-lime rounded-full transition-all duration-300"
+                style={{ width: `${storagePercent}%` }}
+              />
             </div>
             <button
-              onClick={() => navigate('/documents')}
+              onClick={() => setIsUpgradeModalOpen(true)}
               className="mt-2.5 w-full py-1.5 px-2 bg-white hover:bg-cream text-[11px] font-black uppercase tracking-wider text-black rounded-lg border-1.5 border-black shadow-neo-sm flex items-center justify-center gap-1.5 transition-all"
             >
               <span>Upgrade Plan</span>
@@ -303,6 +338,103 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           {children || <Outlet />}
         </main>
       </div>
+
+      {/* Upgrade Plan Modal */}
+      {isUpgradeModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="neo-box w-full max-w-lg bg-white p-6 shadow-neo-xl">
+            <div className="flex items-center justify-between pb-3 border-b-1.5 border-black mb-4">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-lime border border-black">
+                  FAMILY VAULT PLANS
+                </span>
+                <h3 className="text-lg font-black text-black mt-1">Upgrade Storage & Features</h3>
+              </div>
+              <button
+                onClick={() => setIsUpgradeModalOpen(false)}
+                className="p-1 rounded-md hover:bg-cream border border-black"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {/* Plan 1: Free Household */}
+              <div className="p-3.5 rounded-xl border-1.5 border-black bg-cream flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-black text-black uppercase">Free Household Plan</h4>
+                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-lime text-black border border-black">
+                      Active
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-gray-600 font-semibold mt-0.5">
+                    10 GB Secure Vault • Unlimited Family Members • FamilyAI Assistant
+                  </p>
+                </div>
+                <div className="text-right">
+                  <span className="text-xs font-black text-black">$0</span>
+                  <span className="text-[10px] text-gray-500 font-bold block">/ forever</span>
+                </div>
+              </div>
+
+              {/* Plan 2: Family Pro */}
+              <div className="p-3.5 rounded-xl border-1.5 border-black bg-white flex items-center justify-between hover:bg-cream/40 transition">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-black text-black uppercase">Family Vault Pro</h4>
+                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-pink text-black border border-black">
+                      Popular
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-gray-600 font-semibold mt-0.5">
+                    100 GB Encrypted Storage • Automated Document OCR • Priority AI
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    toast.success('You have selected Family Vault Pro! 100 GB storage unlocked.');
+                    setIsUpgradeModalOpen(false);
+                  }}
+                  className="neo-btn px-3 py-1.5 bg-lime text-black text-xs font-black uppercase tracking-wider"
+                >
+                  $4.99/mo
+                </button>
+              </div>
+
+              {/* Plan 3: Family Unlimited */}
+              <div className="p-3.5 rounded-xl border-1.5 border-black bg-white flex items-center justify-between hover:bg-cream/40 transition">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-black text-black uppercase">Unlimited Estate Vault</h4>
+                  </div>
+                  <p className="text-[11px] text-gray-600 font-semibold mt-0.5">
+                    Unlimited Storage • Biometric Access • Legal Document Archival
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    toast.success('You have selected Unlimited Estate Vault!');
+                    setIsUpgradeModalOpen(false);
+                  }}
+                  className="neo-btn px-3 py-1.5 bg-cyan text-black text-xs font-black uppercase tracking-wider"
+                >
+                  $9.99/mo
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-5 pt-3 border-t-1.5 border-black/10 flex justify-end">
+              <button
+                onClick={() => setIsUpgradeModalOpen(false)}
+                className="px-4 py-2 text-xs font-bold rounded-lg border-1.5 border-black bg-white hover:bg-cream"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
