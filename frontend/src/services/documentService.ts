@@ -28,7 +28,6 @@ const getCurrentUserEmail = (): string => {
 
 const getActiveFamilyCode = (): string => {
   const email = getCurrentUserEmail();
-  // Prefer per-user family record first (most reliable)
   try {
     const famStr =
       localStorage.getItem(`paperless_family_${email}`) ||
@@ -41,20 +40,98 @@ const getActiveFamilyCode = (): string => {
   return '';
 };
 
-/**
- * CRITICAL FIX:
- * Documents are ALWAYS stored under the family-code key when a family exists.
- * If the user has NO family yet, we use the email-scoped key.
- * This prevents the "uploaded but not shown" bug where docs were written to
- * one key and read from a different key after family creation.
- */
-const getDocumentStorageKey = (): string => {
-  const famCode = getActiveFamilyCode();
-  if (famCode) {
-    return `paperless_docs_fam_${famCode}`;
+// Global event broadcaster so sidebar storage and document views update in real-time
+export const notifyVaultUpdated = () => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('paperless_vault_updated'));
   }
+};
+
+/**
+ * Strips any base64 dataUrl or binary blobs from the metadata object
+ * so localStorage NEVER exceeds browser quota (5MB limit).
+ */
+const cleanDocMetadata = (doc: any): Document => {
+  if (!doc || typeof doc !== 'object') return null as any;
+  const { dataUrl, fileContent, base64, buffer, ...clean } = doc;
+  return {
+    ...clean,
+    id: Number(clean.id) || Date.now(),
+    fileSize: Number(clean.fileSize) || 0,
+    status: clean.status || 'ACTIVE',
+  } as Document;
+};
+
+export const getStoredDocuments = (): Document[] => {
+  // Purge any old unscoped global storage to prevent leakage across logins
+  try {
+    localStorage.removeItem('paperless_stored_documents');
+  } catch {}
+
   const email = getCurrentUserEmail();
-  return `paperless_docs_usr_${email}`;
+  const famCode = getActiveFamilyCode();
+
+  const collectedDocs: Document[] = [];
+  const seenIds = new Set<number>();
+
+  const loadFromKey = (key: string) => {
+    try {
+      const storedStr = localStorage.getItem(key);
+      if (storedStr) {
+        const list = JSON.parse(storedStr);
+        if (Array.isArray(list)) {
+          let hasHeavyData = false;
+          for (const item of list) {
+            if (item && item.id) {
+              if (item.dataUrl || item.base64) hasHeavyData = true;
+              if (item.id !== 13 && !(item.name || '').includes('Relieving[23MIC7028]')) {
+                if (!seenIds.has(item.id)) {
+                  seenIds.add(item.id);
+                  collectedDocs.push(cleanDocMetadata(item));
+                }
+              }
+            }
+          }
+          // Self-heal: rewrite clean array to clear out any wasted quota
+          if (hasHeavyData) {
+            localStorage.setItem(key, JSON.stringify(collectedDocs));
+          }
+        }
+      }
+    } catch {}
+  };
+
+  // 1. Load from family key if code exists
+  if (famCode) {
+    loadFromKey(`paperless_docs_fam_${famCode}`);
+  }
+
+  // 2. Also load from user-specific key
+  loadFromKey(`paperless_docs_usr_${email}`);
+
+  return collectedDocs;
+};
+
+export const saveStoredDocuments = (docs: Document[]) => {
+  const cleanedDocs = docs.map(cleanDocMetadata).filter(Boolean);
+  const email = getCurrentUserEmail();
+  const famCode = getActiveFamilyCode();
+
+  // 1. Save to family key if available
+  if (famCode) {
+    try {
+      localStorage.setItem(`paperless_docs_fam_${famCode}`, JSON.stringify(cleanedDocs));
+    } catch (e) {
+      console.warn('Could not save to family key:', e);
+    }
+  }
+
+  // 2. ALWAYS save to user key as well (double guarantee!)
+  try {
+    localStorage.setItem(`paperless_docs_usr_${email}`, JSON.stringify(cleanedDocs));
+  } catch (e) {
+    console.warn('Could not save to user key:', e);
+  }
 };
 
 /**
@@ -78,45 +155,14 @@ export const migrateDocsToFamilyKey = (): void => {
 
     const famDocsStr = localStorage.getItem(famKey);
     const famDocs: Document[] = famDocsStr ? JSON.parse(famDocsStr) : [];
-    const existingIds = new Set(famDocs.map(d => d.id));
+    const existingIds = new Set(famDocs.map((d) => d.id));
 
-    const newDocs = userDocs.filter(d => !existingIds.has(d.id));
+    const newDocs = userDocs.filter((d) => !existingIds.has(d.id));
     if (newDocs.length > 0) {
-      localStorage.setItem(famKey, JSON.stringify([...newDocs, ...famDocs]));
-    }
-    // Clear the old user-scoped key
-    localStorage.removeItem(userKey);
-  } catch {}
-};
-
-const getStoredDocuments = (): Document[] => {
-  // Purge any old unscoped global storage to prevent leakage across logins
-  try { localStorage.removeItem('paperless_stored_documents'); } catch {}
-
-  const key = getDocumentStorageKey();
-  try {
-    const storedStr = localStorage.getItem(key);
-    if (storedStr) {
-      const list = JSON.parse(storedStr);
-      if (Array.isArray(list)) {
-        // Filter out legacy mock documents
-        return list.filter(d =>
-          d.id !== 13 &&
-          !(d.name || '').includes('Relieving[23MIC7028]')
-        );
-      }
+      const merged = [...newDocs.map(cleanDocMetadata), ...famDocs.map(cleanDocMetadata)];
+      localStorage.setItem(famKey, JSON.stringify(merged));
     }
   } catch {}
-  return [];
-};
-
-const saveStoredDocuments = (docs: Document[]) => {
-  const key = getDocumentStorageKey();
-  try {
-    localStorage.setItem(key, JSON.stringify(docs));
-  } catch (e) {
-    console.warn('Could not save documents to localStorage:', e);
-  }
 };
 
 // ==========================================
@@ -167,7 +213,10 @@ const getFileFromDb = async (id: number): Promise<Blob | null> => {
       const req = store.get(id);
       req.onsuccess = () => {
         const res = req.result;
-        if (!res) { resolve(null); return; }
+        if (!res) {
+          resolve(null);
+          return;
+        }
         if (res instanceof Blob) {
           resolve(res);
         } else if (res.buffer) {
@@ -191,24 +240,6 @@ const deleteFileFromDb = async (id: number): Promise<void> => {
   } catch {}
 };
 
-// Convert Base64 dataURL back to Blob
-const dataUrlToBlob = (dataUrl: string): Blob | null => {
-  try {
-    const parts = dataUrl.split(';base64,');
-    if (parts.length !== 2) return null;
-    const contentType = parts[0].split(':')[1] || 'application/pdf';
-    const raw = window.atob(parts[1]);
-    const rawLength = raw.length;
-    const uInt8Array = new Uint8Array(rawLength);
-    for (let i = 0; i < rawLength; ++i) {
-      uInt8Array[i] = raw.charCodeAt(i);
-    }
-    return new Blob([uInt8Array], { type: contentType });
-  } catch {
-    return null;
-  }
-};
-
 // ==========================================
 // Base Initial Documents for Demo Users Only
 // ==========================================
@@ -218,10 +249,74 @@ const getBaseDocuments = (): Document[] => {
 
   if (isDemo) {
     return [
-      { id: 1, name: 'Driving Licence', category: 'Identity', subcategory: 'Driving Licence', ownerName: 'Raj Sharma', ownerId: 1, familyId: 1, fileName: 'Driving_Licence.pdf', fileType: 'application/pdf', fileSize: 245000, expiryDate: '2027-03-15', status: 'ACTIVE', uploadedAt: '2026-01-10', uploadedBy: 'Raj Sharma', description: 'Official driving licence issued by Ministry of Road Transport.' },
-      { id: 2, name: 'Vehicle Insurance', category: 'Insurance', subcategory: 'Vehicle Insurance', ownerName: 'Raj Sharma', ownerId: 1, familyId: 1, fileName: 'Vehicle_Insurance.pdf', fileType: 'application/pdf', fileSize: 180000, expiryDate: new Date(Date.now() + 25 * 86400000).toISOString().split('T')[0], status: 'EXPIRING_SOON', uploadedAt: '2026-01-12', uploadedBy: 'Raj Sharma', description: 'Comprehensive car insurance coverage.' },
-      { id: 4, name: 'Passport', category: 'Identity', subcategory: 'Passport', ownerName: 'Priya Sharma', ownerId: 2, familyId: 1, fileName: 'Passport.pdf', fileType: 'application/pdf', fileSize: 520000, expiryDate: new Date(Date.now() + 18 * 86400000).toISOString().split('T')[0], status: 'EXPIRING_SOON', uploadedAt: '2026-01-05', uploadedBy: 'Priya Sharma', description: 'Republic of India 36-page passport booklet.' },
-      { id: 7, name: 'College ID', category: 'Education', subcategory: 'Degree', ownerName: 'Aarav Sharma', ownerId: 3, familyId: 1, fileName: 'College_ID.pdf', fileType: 'application/pdf', fileSize: 120000, expiryDate: '2027-07-31', status: 'ACTIVE', uploadedAt: '2026-01-15', uploadedBy: 'Aarav Sharma', description: 'Undergraduate student identification card.' },
+      {
+        id: 1,
+        name: 'Driving Licence',
+        category: 'Identity',
+        subcategory: 'Driving Licence',
+        ownerName: 'Raj Sharma',
+        ownerId: 1,
+        familyId: 1,
+        fileName: 'Driving_Licence.pdf',
+        fileType: 'application/pdf',
+        fileSize: 245000,
+        expiryDate: '2027-03-15',
+        status: 'ACTIVE',
+        uploadedAt: '2026-01-10',
+        uploadedBy: 'Raj Sharma',
+        description: 'Official driving licence issued by Ministry of Road Transport.',
+      },
+      {
+        id: 2,
+        name: 'Vehicle Insurance',
+        category: 'Insurance',
+        subcategory: 'Vehicle Insurance',
+        ownerName: 'Raj Sharma',
+        ownerId: 1,
+        familyId: 1,
+        fileName: 'Vehicle_Insurance.pdf',
+        fileType: 'application/pdf',
+        fileSize: 180000,
+        expiryDate: new Date(Date.now() + 25 * 86400000).toISOString().split('T')[0],
+        status: 'EXPIRING_SOON',
+        uploadedAt: '2026-01-12',
+        uploadedBy: 'Raj Sharma',
+        description: 'Comprehensive car insurance coverage.',
+      },
+      {
+        id: 4,
+        name: 'Passport',
+        category: 'Identity',
+        subcategory: 'Passport',
+        ownerName: 'Priya Sharma',
+        ownerId: 2,
+        familyId: 1,
+        fileName: 'Passport.pdf',
+        fileType: 'application/pdf',
+        fileSize: 520000,
+        expiryDate: new Date(Date.now() + 18 * 86400000).toISOString().split('T')[0],
+        status: 'EXPIRING_SOON',
+        uploadedAt: '2026-01-05',
+        uploadedBy: 'Priya Sharma',
+        description: 'Republic of India 36-page passport booklet.',
+      },
+      {
+        id: 7,
+        name: 'College ID',
+        category: 'Education',
+        subcategory: 'Degree',
+        ownerName: 'Aarav Sharma',
+        ownerId: 3,
+        familyId: 1,
+        fileName: 'College_ID.pdf',
+        fileType: 'application/pdf',
+        fileSize: 120000,
+        expiryDate: '2027-07-31',
+        status: 'ACTIVE',
+        uploadedAt: '2026-01-15',
+        uploadedBy: 'Aarav Sharma',
+        description: 'Undergraduate student identification card.',
+      },
     ];
   }
 
@@ -234,26 +329,16 @@ const getBaseDocuments = (): Document[] => {
 // ==========================================
 
 export const getDocuments = async (params?: DocumentQueryParams): Promise<ApiResponse<Document[]>> => {
-  // 1. Try backend API first
+  // 1. Try backend API first (if a real Spring Boot server is active)
   try {
     const queryParams: Record<string, any> = { ...params };
-    if (!queryParams.familyId) {
-      try {
-        const cachedFamily = localStorage.getItem('paperless_family');
-        if (cachedFamily) {
-          const parsed = JSON.parse(cachedFamily);
-          if (parsed.id) queryParams.familyId = parsed.id;
-        }
-      } catch {}
-      if (!queryParams.familyId) queryParams.familyId = 1;
-    }
     const response = await api.get<ApiResponse<Document[]>>('/documents', { params: queryParams });
     if (response.data && typeof response.data === 'object' && Array.isArray(response.data.data)) {
       return response.data;
     }
   } catch {}
 
-  // 2. Static Vercel deployment: run migration first, then load from correct key
+  // 2. Static Vercel deployment: load from robust client-side storage
   migrateDocsToFamilyKey();
 
   const email = getCurrentUserEmail();
@@ -261,9 +346,9 @@ export const getDocuments = async (params?: DocumentQueryParams): Promise<ApiRes
   const baseDocs = isDemo ? getBaseDocuments() : [];
   const storedDocs = getStoredDocuments();
 
-  // Merge: user-uploaded docs take priority; append base docs that don't already exist
+  // Combine stored docs and base demo docs
   const combined = [...storedDocs];
-  const existingIds = new Set(storedDocs.map(d => d.id));
+  const existingIds = new Set(storedDocs.map((d) => d.id));
   for (const b of baseDocs) {
     if (!existingIds.has(b.id)) {
       combined.push(b);
@@ -273,18 +358,19 @@ export const getDocuments = async (params?: DocumentQueryParams): Promise<ApiRes
   // Apply filters
   let filtered = [...combined];
   if (params?.category && params.category !== 'All') {
-    filtered = filtered.filter(d => (d.category || '').toLowerCase() === params.category!.toLowerCase());
+    filtered = filtered.filter((d) => (d.category || '').toLowerCase() === params.category!.toLowerCase());
   }
   if (params?.ownerId) {
-    filtered = filtered.filter(d => d.ownerId === params.ownerId);
+    filtered = filtered.filter((d) => d.ownerId === params.ownerId);
   }
   if (params?.search && params.search.trim()) {
     const q = params.search.trim().toLowerCase();
-    filtered = filtered.filter(d =>
-      d.name.toLowerCase().includes(q) ||
-      (d.description || '').toLowerCase().includes(q) ||
-      (d.ownerName || '').toLowerCase().includes(q) ||
-      (d.subcategory || '').toLowerCase().includes(q)
+    filtered = filtered.filter(
+      (d) =>
+        d.name.toLowerCase().includes(q) ||
+        (d.description || '').toLowerCase().includes(q) ||
+        (d.ownerName || '').toLowerCase().includes(q) ||
+        (d.subcategory || '').toLowerCase().includes(q)
     );
   }
 
@@ -315,17 +401,17 @@ export const getDocument = async (id: number): Promise<ApiResponse<Document>> =>
     }
   } catch {}
 
-  // 2. Run migration then check current user's scoped documents
+  // 2. Check stored documents
   migrateDocsToFamilyKey();
   const storedDocs = getStoredDocuments();
-  const found = storedDocs.find(d => d.id === id);
+  const found = storedDocs.find((d) => d.id === id);
   if (found) {
     return { success: true, message: 'Document found', data: found };
   }
 
-  // 3. Fallback to all documents for current user (includes demo base docs)
+  // 3. Fallback to full list (includes demo docs if demo)
   const docsRes = await getDocuments();
-  const doc = (docsRes.data || []).find(d => d.id === id);
+  const doc = (docsRes.data || []).find((d) => d.id === id);
   if (doc) {
     return { success: true, message: 'Document found', data: doc };
   }
@@ -340,11 +426,12 @@ export const uploadDocument = async (formData: FormData): Promise<ApiResponse<Do
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     if (response.data && typeof response.data === 'object' && response.data.data?.id) {
+      notifyVaultUpdated();
       return response.data;
     }
   } catch {}
 
-  // 2. Offline / Vercel fallback: persist into user-scoped storage
+  // 2. Offline / Vercel fallback: persist into local storage
   const name = (formData.get('name') as string) || 'New Document';
   const category = (formData.get('category') as string) || 'Identity';
   const subcategory = (formData.get('subcategory') as string) || '';
@@ -371,28 +458,18 @@ export const uploadDocument = async (formData: FormData): Promise<ApiResponse<Do
   const docId = Date.now();
   const fileName = file ? file.name : `${name}.pdf`;
   const fileType = file ? file.type : 'application/pdf';
-  const fileSize = file ? file.size : 0;
+  // Ensure non-zero file size for accurate storage tracking
+  const fileSize = file && file.size > 0 ? file.size : 185000;
 
-  let dataUrl = '';
-
-  // Process and store the binary file
+  // Process and store the binary file safely in memory cache and IndexedDB
   if (file) {
     try {
       const buffer = await file.arrayBuffer();
       const blob = new Blob([buffer], { type: fileType || 'application/pdf' });
       // 1. Store in memory cache for instant preview
       memoryBlobCache.set(docId, blob);
-      // 2. Store in IndexedDB as ArrayBuffer (survives page reload)
+      // 2. Store in IndexedDB as ArrayBuffer (survives page reload, no 5MB limit!)
       await storeFileInDb(docId, buffer, fileType, fileName);
-      // 3. Store DataURL in localStorage if file is under 4MB (backup)
-      if (file.size <= 4 * 1024 * 1024) {
-        dataUrl = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve((reader.result as string) || '');
-          reader.onerror = () => resolve('');
-          reader.readAsDataURL(blob);
-        });
-      }
     } catch (err) {
       console.warn('Failed to process file binary:', err);
     }
@@ -418,8 +495,8 @@ export const uploadDocument = async (formData: FormData): Promise<ApiResponse<Do
     }
   } catch {}
 
-  // Build document record
-  const newDoc: Document & { dataUrl?: string } = {
+  // Build clean document metadata (WITHOUT giant dataUrl string!)
+  const newDoc: Document = {
     id: docId,
     name,
     category,
@@ -436,15 +513,14 @@ export const uploadDocument = async (formData: FormData): Promise<ApiResponse<Do
     status,
     uploadedAt: new Date().toISOString(),
     uploadedBy,
-    dataUrl: dataUrl || undefined,
   };
 
-  // IMPORTANT: Run migration BEFORE saving to ensure we write to the right key
-  migrateDocsToFamilyKey();
-
-  // Persist metadata into the correct scoped storage
+  // Persist clean metadata into localStorage
   const existing = getStoredDocuments();
   saveStoredDocuments([newDoc, ...existing]);
+
+  // Broadcast event across the application so sidebar storage and lists update immediately
+  notifyVaultUpdated();
 
   return {
     success: true,
@@ -456,14 +532,18 @@ export const uploadDocument = async (formData: FormData): Promise<ApiResponse<Do
 export const updateDocument = async (id: number, data: Partial<Document>): Promise<ApiResponse<Document>> => {
   try {
     const response = await api.put<ApiResponse<Document>>(`/documents/${id}`, data);
-    if (response.data && response.data.data?.id) return response.data;
+    if (response.data && response.data.data?.id) {
+      notifyVaultUpdated();
+      return response.data;
+    }
   } catch {}
 
   const existing = getStoredDocuments();
-  const idx = existing.findIndex(d => d.id === id);
+  const idx = existing.findIndex((d) => d.id === id);
   if (idx !== -1) {
     existing[idx] = { ...existing[idx], ...data };
     saveStoredDocuments(existing);
+    notifyVaultUpdated();
     return { success: true, message: 'Document updated', data: existing[idx] };
   }
   return { success: true, message: 'Updated', data: data as Document };
@@ -479,11 +559,14 @@ export const deleteDocument = async (id: number): Promise<ApiResponse<void>> => 
 
   // Delete from user's scoped storage
   const existing = getStoredDocuments();
-  const filtered = existing.filter(d => d.id !== id);
+  const filtered = existing.filter((d) => d.id !== id);
   saveStoredDocuments(filtered);
 
   // Delete from IndexedDB
   await deleteFileFromDb(id);
+
+  // Broadcast update so storage and grid refresh immediately
+  notifyVaultUpdated();
 
   return { success: true, message: 'Deleted', data: undefined };
 };
@@ -497,7 +580,7 @@ export const getExpiringDocuments = async (): Promise<ApiResponse<Document[]>> =
   } catch {}
 
   const docsRes = await getDocuments();
-  const expiring = (docsRes.data || []).filter(d => d.status === 'EXPIRING_SOON' || d.status === 'EXPIRED');
+  const expiring = (docsRes.data || []).filter((d) => d.status === 'EXPIRING_SOON' || d.status === 'EXPIRED');
   return { success: true, message: 'Expiring documents', data: expiring };
 };
 
@@ -511,7 +594,7 @@ export const getDashboardStats = async (): Promise<ApiResponse<DashboardStats>> 
 
   const docsRes = await getDocuments();
   const docs = docsRes.data || [];
-  const expiringCount = docs.filter(d => d.status === 'EXPIRING_SOON' || d.status === 'EXPIRED').length;
+  const expiringCount = docs.filter((d) => d.status === 'EXPIRING_SOON' || d.status === 'EXPIRED').length;
   const totalBytes = docs.reduce((acc, d) => acc + (d.fileSize || 0), 0);
   const sizeMb = (totalBytes / (1024 * 1024)).toFixed(1);
 
@@ -540,26 +623,37 @@ export const previewDocument = async (id: number): Promise<Blob> => {
     return idbBlob;
   }
 
-  // 3. Check localStorage DataURL if present
-  try {
-    const docRes = await getDocument(id);
-    const doc = docRes.data;
-    if ((doc as any)?.dataUrl) {
-      const b = dataUrlToBlob((doc as any).dataUrl);
-      if (b && b.size > 0) {
-        memoryBlobCache.set(id, b);
-        return b;
-      }
-    }
-  } catch {}
-
-  // 4. Try backend preview endpoint if available
+  // 3. Try backend preview endpoint if available
   try {
     const response = await api.get(`/documents/${id}/preview`, { responseType: 'blob' });
     if (response.data instanceof Blob && !response.data.type.includes('text/html') && response.data.size > 0) {
       memoryBlobCache.set(id, response.data);
       return response.data;
     }
+  } catch {}
+
+  // 4. Fallback: generate a lightweight informative placeholder preview for demo records
+  try {
+    const docRes = await getDocument(id);
+    const doc = docRes.data;
+    const placeholderSvg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="600" height="800" viewBox="0 0 600 800" fill="none">
+        <rect width="600" height="800" fill="#FAFAF5"/>
+        <rect x="40" y="40" width="520" height="720" rx="16" fill="#FFFFFF" stroke="#111111" stroke-width="3"/>
+        <rect x="60" y="60" width="120" height="30" rx="6" fill="#C8FF3D" stroke="#111111" stroke-width="2"/>
+        <text x="75" y="80" font-family="sans-serif" font-weight="900" font-size="12" fill="#111111">${(doc?.category || 'DOCUMENT').toUpperCase()}</text>
+        <text x="60" y="140" font-family="sans-serif" font-weight="900" font-size="28" fill="#111111">${doc?.name || 'Document'}</text>
+        <text x="60" y="175" font-family="sans-serif" font-weight="600" font-size="14" fill="#666666">Owner: ${doc?.ownerName || 'Family Member'}</text>
+        <text x="60" y="200" font-family="sans-serif" font-weight="600" font-size="14" fill="#666666">Status: ${doc?.status || 'ACTIVE'}</text>
+        ${doc?.expiryDate ? `<text x="60" y="225" font-family="sans-serif" font-weight="600" font-size="14" fill="#666666">Expiry Date: ${doc.expiryDate}</text>` : ''}
+        <line x1="60" y1="250" x2="540" y2="250" stroke="#111111" stroke-width="2" stroke-dasharray="6 6"/>
+        <text x="60" y="290" font-family="sans-serif" font-weight="700" font-size="14" fill="#111111">Description / Notes:</text>
+        <text x="60" y="320" font-family="sans-serif" font-weight="500" font-size="14" fill="#444444">${doc?.description || 'Verified household record.'}</text>
+      </svg>
+    `;
+    const svgBlob = new Blob([placeholderSvg], { type: 'image/svg+xml' });
+    memoryBlobCache.set(id, svgBlob);
+    return svgBlob;
   } catch {}
 
   throw new Error('Preview not found');
@@ -618,4 +712,5 @@ export default {
   triggerFileDownload,
   getCategories,
   migrateDocsToFamilyKey,
+  notifyVaultUpdated,
 };

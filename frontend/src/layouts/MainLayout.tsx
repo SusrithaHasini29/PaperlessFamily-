@@ -101,9 +101,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     fetchUnread();
     fetchSearchDataAndStorage();
     const interval = setInterval(fetchUnread, 30000);
+
+    const handleVaultUpdate = () => {
+      fetchSearchDataAndStorage();
+    };
+    window.addEventListener('paperless_vault_updated', handleVaultUpdate);
+
     return () => {
       isMounted = false;
       clearInterval(interval);
+      window.removeEventListener('paperless_vault_updated', handleVaultUpdate);
     };
   }, [location.pathname, family?.id]);
 

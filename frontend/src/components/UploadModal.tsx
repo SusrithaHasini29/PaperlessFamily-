@@ -206,9 +206,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       setTimeout(() => {
         setIsUploading(false);
         resetForm();
-        onClose();
         if (onSuccess) onSuccess();
-      }, 400);
+        onClose();
+      }, 200);
     } catch (err: any) {
       setIsUploading(false);
       setUploadProgress(0);

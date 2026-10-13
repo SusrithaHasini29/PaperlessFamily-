@@ -258,8 +258,14 @@ export const Dashboard: React.FC = () => {
 
     loadDashboardData();
 
+    const handleVaultUpdated = () => {
+      loadDashboardData();
+    };
+    window.addEventListener('paperless_vault_updated', handleVaultUpdated);
+
     return () => {
       isMounted = false;
+      window.removeEventListener('paperless_vault_updated', handleVaultUpdated);
     };
   }, [family]);
 

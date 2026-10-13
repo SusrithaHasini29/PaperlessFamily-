@@ -152,6 +152,14 @@ export const Documents: React.FC = () => {
 
   useEffect(() => {
     fetchDocuments();
+
+    const handleVaultUpdated = () => {
+      fetchDocuments();
+    };
+    window.addEventListener('paperless_vault_updated', handleVaultUpdated);
+    return () => {
+      window.removeEventListener('paperless_vault_updated', handleVaultUpdated);
+    };
   }, [fetchDocuments]);
 
   // Tab counts
