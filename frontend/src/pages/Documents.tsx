@@ -20,6 +20,11 @@ import {
   Car,
   Receipt,
   Folder,
+  X,
+  Bot,
+  Users,
+  UserCircle,
+  Bell,
 } from 'lucide-react';
 import { Document } from '../types';
 import * as documentService from '../services/documentService';
@@ -68,14 +73,62 @@ export const Documents: React.FC = () => {
       setActiveTab(categoryParam);
     }
     const searchParam = searchParams.get('search');
-    if (searchParam) {
+    if (searchParam !== null) {
       setSearchQuery(searchParam);
+    } else {
+      setSearchQuery('');
     }
     const actionParam = searchParams.get('action');
     if (actionParam === 'upload') {
       setIsUploadModalOpen(true);
     }
   }, [searchParams]);
+
+  const navigationIntent = useMemo(() => {
+    if (!searchQuery.trim()) return null;
+    const q = searchQuery.toLowerCase().trim();
+    if (q.includes('ai') || q.includes('assist') || q.includes('bot') || q.includes('chat') || q.includes('ask')) {
+      return {
+        title: 'FamilyAI Assistant',
+        desc: 'FamilyAI is your conversational assistant for asking questions about family documents.',
+        path: '/ai-assistant',
+        icon: Bot,
+        color: 'bg-lime text-black',
+        btnText: 'Open FamilyAI',
+      };
+    }
+    if (q.includes('fam') || q.includes('member') || q.includes('relat') || q.includes('people')) {
+      return {
+        title: 'Family Space',
+        desc: 'Manage family members, relationships, and invite codes in the Family Space.',
+        path: '/family',
+        icon: Users,
+        color: 'bg-pink text-black',
+        btnText: 'Open Family Space',
+      };
+    }
+    if (q.includes('prof') || q.includes('account') || q.includes('user') || q.includes('pass')) {
+      return {
+        title: 'Profile Settings',
+        desc: 'View or edit your personal profile and relationship.',
+        path: '/profile',
+        icon: UserCircle,
+        color: 'bg-cyan text-black',
+        btnText: 'Open Profile Settings',
+      };
+    }
+    if (q.includes('notif') || q.includes('alert') || q.includes('remind')) {
+      return {
+        title: 'Notifications Center',
+        desc: 'Review upcoming expiration reminders and alerts.',
+        path: '/notifications',
+        icon: Bell,
+        color: 'bg-yellow-300 text-black',
+        btnText: 'Open Notifications',
+      };
+    }
+    return null;
+  }, [searchQuery]);
 
   const fetchDocuments = useCallback(async () => {
     try {
@@ -314,14 +367,32 @@ export const Documents: React.FC = () => {
       <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
         {/* Search */}
         <div className="relative flex-1 max-w-lg">
-          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500" />
+          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && navigationIntent) {
+                navigate(navigationIntent.path);
+              }
+            }}
             placeholder="Search documents by name, owner, or description..."
-            className="w-full pl-10 pr-4 py-2 text-xs font-semibold bg-white border-1.5 border-black rounded-xl focus:outline-none shadow-neo-sm placeholder-gray-500"
+            className="w-full pl-10 pr-9 py-2 text-xs font-semibold bg-white border-1.5 border-black rounded-xl focus:outline-none shadow-neo-sm placeholder-gray-500"
           />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery('');
+                navigate('/documents', { replace: true });
+              }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-black rounded-full transition"
+              title="Clear search"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
         {/* Sort dropdown */}
@@ -377,16 +448,95 @@ export const Documents: React.FC = () => {
           ))}
         </div>
       ) : filteredDocuments.length === 0 ? (
-        <EmptyState
-          title={searchQuery ? 'No matching documents' : 'No documents in this category'}
-          description={
-            searchQuery
-              ? `No documents found matching "${searchQuery}". Try a different keyword.`
-              : 'Start organizing your family documents by uploading your first record.'
-          }
-          actionText="Upload Document"
-          onAction={() => setIsUploadModalOpen(true)}
-        />
+        <div className="space-y-4">
+          {navigationIntent && (
+            <div className="p-4 sm:p-5 bg-white border-2 border-black rounded-2xl shadow-neo-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <div
+                  className={`w-11 h-11 rounded-xl border-1.5 border-black flex items-center justify-center shrink-0 shadow-neo-sm ${navigationIntent.color}`}
+                >
+                  <navigationIntent.icon className="w-6 h-6 stroke-[2.5]" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-lime border border-black">
+                    LOOKING FOR A FEATURE?
+                  </span>
+                  <h4 className="text-sm font-black text-black mt-0.5">
+                    Did you mean {navigationIntent.title}?
+                  </h4>
+                  <p className="text-xs text-gray-600 font-medium">
+                    {navigationIntent.desc}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    navigate('/documents', { replace: true });
+                  }}
+                  className="px-3.5 py-2 text-xs font-bold rounded-xl border-1.5 border-black bg-cream hover:bg-gray-200 transition"
+                >
+                  Clear Search
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate(navigationIntent.path)}
+                  className="neo-btn px-4 py-2 bg-black text-white text-xs font-black uppercase tracking-wider flex items-center gap-1.5"
+                >
+                  <span>{navigationIntent.btnText}</span>
+                  <span>→</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="neo-box flex flex-col items-center justify-center p-8 sm:p-12 text-center bg-white shadow-neo-md">
+            <div className="w-16 h-16 sm:w-20 sm:h-20 mb-4 rounded-2xl bg-cream border-1.5 border-black shadow-neo-sm flex items-center justify-center text-black">
+              <FileText className="w-8 h-8 sm:w-10 sm:h-10 text-black stroke-[2]" />
+            </div>
+            <h3 className="text-base sm:text-lg font-black text-black mb-1">
+              {searchQuery ? 'No matching documents' : 'No documents in this category'}
+            </h3>
+            <p className="text-xs sm:text-sm text-gray-600 max-w-md mb-5 leading-relaxed font-medium">
+              {searchQuery
+                ? `No documents found matching "${searchQuery}". Clear your search or upload a new record.`
+                : 'Start organizing your family documents by uploading your first record.'}
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-2.5">
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    navigate('/documents', { replace: true });
+                  }}
+                  className="neo-btn px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider bg-cream text-black hover:bg-gray-200"
+                >
+                  Clear Search Filter
+                </button>
+              )}
+              {activeTab !== 'All' && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('All')}
+                  className="neo-btn px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider bg-white text-black hover:bg-cream"
+                >
+                  View All Categories
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsUploadModalOpen(true)}
+                className="neo-btn inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider bg-lime text-black"
+              >
+                <Plus className="w-4 h-4 stroke-[3]" />
+                <span>Upload Document</span>
+              </button>
+            </div>
+          </div>
+        </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredDocuments.map((doc) => (

@@ -20,6 +20,8 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import * as notificationService from '../services/notificationService';
 import * as documentService from '../services/documentService';
+import * as familyService from '../services/familyService';
+import { Document as VaultDocument, FamilyMember } from '../types';
 import NotificationDropdown from '../components/NotificationDropdown';
 import toast from 'react-hot-toast';
 
@@ -37,6 +39,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [copiedCode, setCopiedCode] = useState(false);
   const [searchVal, setSearchVal] = useState('');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [allDocs, setAllDocs] = useState<VaultDocument[]>([]);
+  const [allMembers, setAllMembers] = useState<FamilyMember[]>([]);
   const [storageText, setStorageText] = useState('0 MB of 10 GB');
   const [storagePercent, setStoragePercent] = useState(1);
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
@@ -54,11 +59,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       }
     };
 
-    const fetchStorage = async () => {
+    const fetchSearchDataAndStorage = async () => {
       try {
         const res = await documentService.getDocuments();
         if (!isMounted) return;
         const docs = res.data || [];
+        setAllDocs(docs);
+
         const totalBytes = docs.reduce((acc, d) => acc + (d.fileSize || 0), 0);
         if (totalBytes === 0) {
           setStorageText('0 MB of 10 GB');
@@ -79,16 +86,26 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           setStoragePercent(1);
         }
       }
+
+      try {
+        const famId = family?.id || 1;
+        const membersRes = await familyService.getFamilyMembers(famId);
+        if (isMounted && membersRes && membersRes.data) {
+          setAllMembers(membersRes.data);
+        }
+      } catch {
+        // Silent fallback
+      }
     };
 
     fetchUnread();
-    fetchStorage();
+    fetchSearchDataAndStorage();
     const interval = setInterval(fetchUnread, 30000);
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [location.pathname]);
+  }, [location.pathname, family?.id]);
 
   const handleCopyFamilyCode = () => {
     if (family?.familyCode) {
@@ -130,6 +147,137 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     return 'PaperlessFamily';
   };
 
+  const APP_SHORTCUTS = [
+    {
+      title: 'FamilyAI Assistant',
+      desc: 'Chat with FamilyAI about documents & policies',
+      path: '/ai-assistant',
+      icon: Bot,
+      color: 'bg-lime text-black',
+      badge: 'FEATURE',
+      keywords: ['ai', 'assistant', 'chat', 'ask', 'bot', 'familyai', 'help', 'intelligent', 'query', 'support'],
+    },
+    {
+      title: 'Documents Vault',
+      desc: 'Browse, filter, and inspect family documents',
+      path: '/documents',
+      icon: FileText,
+      color: 'bg-purple text-white',
+      badge: 'VAULT',
+      keywords: ['doc', 'docs', 'document', 'documents', 'files', 'vault', 'pdf', 'records', 'archive'],
+    },
+    {
+      title: 'Upload Document',
+      desc: 'Upload an ID, policy, marksheet, or bill',
+      path: '/documents?action=upload',
+      icon: Sparkles,
+      color: 'bg-pink text-black',
+      badge: 'ACTION',
+      keywords: ['upload', 'add', 'new', 'create', 'scan', 'attach'],
+    },
+    {
+      title: 'Family Space',
+      desc: 'View members, relationships, and invite codes',
+      path: '/family',
+      icon: Users,
+      color: 'bg-cyan text-black',
+      badge: 'MEMBERS',
+      keywords: ['family', 'member', 'members', 'relatives', 'code', 'invite', 'people', 'tree'],
+    },
+    {
+      title: 'Profile Settings',
+      desc: 'Manage your name, relationship, and account',
+      path: '/profile',
+      icon: UserCircle,
+      color: 'bg-cream text-black',
+      badge: 'SETTINGS',
+      keywords: ['profile', 'settings', 'account', 'user', 'password', 'relationship', 'role'],
+    },
+    {
+      title: 'Notifications',
+      desc: 'Check document renewal alerts and updates',
+      path: '/notifications',
+      icon: Bell,
+      color: 'bg-pink text-black',
+      badge: 'ALERTS',
+      keywords: ['notification', 'notifications', 'alerts', 'expiry', 'reminders', 'bell', 'renewal'],
+    },
+    {
+      title: 'Dashboard',
+      desc: 'Household overview, storage, and statistics',
+      path: '/dashboard',
+      icon: LayoutDashboard,
+      color: 'bg-lime text-black',
+      badge: 'PAGE',
+      keywords: ['dash', 'dashboard', 'home', 'stats', 'overview'],
+    },
+  ];
+
+  const trimmedSearch = searchVal.trim().toLowerCase();
+
+  const matchedShortcuts = searchVal.trim()
+    ? APP_SHORTCUTS.filter(
+        (s) =>
+          s.title.toLowerCase().includes(trimmedSearch) ||
+          s.desc.toLowerCase().includes(trimmedSearch) ||
+          s.keywords.some((k) => k.includes(trimmedSearch) || trimmedSearch.includes(k))
+      )
+    : [];
+
+  const matchedMembers = searchVal.trim()
+    ? allMembers.filter(
+        (m) =>
+          m.name.toLowerCase().includes(trimmedSearch) ||
+          (m.relationship && m.relationship.toLowerCase().includes(trimmedSearch)) ||
+          (m.email && m.email.toLowerCase().includes(trimmedSearch))
+      )
+    : [];
+
+  const matchedDocs = searchVal.trim()
+    ? allDocs.filter(
+        (d) =>
+          d.name.toLowerCase().includes(trimmedSearch) ||
+          (d.category && d.category.toLowerCase().includes(trimmedSearch)) ||
+          (d.subcategory && d.subcategory.toLowerCase().includes(trimmedSearch)) ||
+          (d.ownerName && d.ownerName.toLowerCase().includes(trimmedSearch)) ||
+          (d.description && d.description.toLowerCase().includes(trimmedSearch))
+      )
+    : [];
+
+  const handleSearchSubmit = () => {
+    if (!searchVal.trim()) return;
+    const q = searchVal.trim().toLowerCase();
+    setIsSearchOpen(false);
+
+    // 1. If high confidence shortcut match (e.g. user typed "AI ASSISTANT", "ai", "family", "profile")
+    if (
+      matchedShortcuts.length > 0 &&
+      (matchedShortcuts[0].title.toLowerCase().includes(q) ||
+        matchedShortcuts[0].keywords.some((k) => q === k || q.includes(k) || k.includes(q)))
+    ) {
+      navigate(matchedShortcuts[0].path);
+      setSearchVal('');
+      return;
+    }
+
+    // 2. If member matched and no document matched
+    if (matchedMembers.length > 0 && matchedDocs.length === 0) {
+      navigate('/family');
+      setSearchVal('');
+      return;
+    }
+
+    // 3. If exact 1 document matched
+    if (matchedDocs.length === 1) {
+      navigate(`/documents/${matchedDocs[0].id}`);
+      setSearchVal('');
+      return;
+    }
+
+    // 4. Default: search documents vault
+    navigate(`/documents?search=${encodeURIComponent(searchVal.trim())}`);
+  };
+
   return (
     <div className="min-h-screen bg-cream flex text-black font-sans selection:bg-lime selection:text-black">
       {/* Mobile Backdrop */}
@@ -137,6 +285,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         <div
           className="fixed inset-0 bg-black/60 z-40 lg:hidden backdrop-blur-xs transition-opacity"
           onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+
+      {/* Global Search Backdrop */}
+      {isSearchOpen && (
+        <div
+          className="fixed inset-0 z-30"
+          onClick={() => setIsSearchOpen(false)}
         />
       )}
 
@@ -237,7 +393,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       {/* Main Content Area */}
       <div className="flex-1 lg:pl-[260px] flex flex-col min-w-0">
         {/* Top Navbar */}
-        <header className="sticky top-0 z-30 bg-white border-b-2 border-black px-4 sm:px-6 py-3 flex items-center justify-between">
+        <header className="sticky top-0 z-40 bg-white border-b-2 border-black px-4 sm:px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3 flex-1 max-w-xl">
             <button
               onClick={() => setMobileMenuOpen(true)}
@@ -247,21 +403,184 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               <Menu className="w-4 h-4" />
             </button>
 
-            {/* Search Input matching Image 2 */}
-            <div className="flex items-center relative w-full max-w-md">
-              <Search className="w-4 h-4 absolute left-3.5 text-gray-500" />
+            {/* Smart OmniSearch Input */}
+            <div className="flex items-center relative w-full max-w-md z-40">
+              <Search className="w-4 h-4 absolute left-3.5 text-gray-500 pointer-events-none" />
               <input
                 type="text"
                 value={searchVal}
-                onChange={(e) => setSearchVal(e.target.value)}
-                placeholder="Search documents, members..."
-                className="w-full pl-10 pr-4 py-2 text-xs font-semibold bg-gray-100/80 border-1.5 border-black/20 rounded-full focus:outline-none focus:border-black focus:bg-white transition placeholder-gray-500"
+                onFocus={() => setIsSearchOpen(true)}
+                onChange={(e) => {
+                  setSearchVal(e.target.value);
+                  setIsSearchOpen(true);
+                }}
+                placeholder="Search AI, documents, members, pages..."
+                className="w-full pl-10 pr-9 py-2 text-xs font-semibold bg-gray-100/90 border-1.5 border-black/30 rounded-full focus:outline-none focus:border-black focus:bg-white shadow-xs transition placeholder-gray-500"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
-                    navigate(`/documents?search=${encodeURIComponent(searchVal)}`);
+                    handleSearchSubmit();
+                  } else if (e.key === 'Escape') {
+                    setIsSearchOpen(false);
                   }
                 }}
               />
+              {searchVal && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchVal('');
+                    setIsSearchOpen(false);
+                  }}
+                  className="absolute right-3 p-0.5 text-gray-400 hover:text-black rounded-full transition"
+                  title="Clear search"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+
+              {/* Instant Search Results Dropdown */}
+              {isSearchOpen && searchVal.trim() && (
+                <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl border-2 border-black shadow-neo-xl overflow-hidden z-50 max-h-[460px] overflow-y-auto">
+                  {/* Category 1: Shortcuts & Pages */}
+                  {matchedShortcuts.length > 0 && (
+                    <div className="p-2 border-b border-gray-200">
+                      <div className="px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-gray-500">
+                        Features & Navigation
+                      </div>
+                      <div className="space-y-1">
+                        {matchedShortcuts.map((s) => {
+                          const Icon = s.icon;
+                          return (
+                            <div
+                              key={s.path}
+                              onClick={() => {
+                                navigate(s.path);
+                                setIsSearchOpen(false);
+                                setSearchVal('');
+                              }}
+                              className="flex items-center justify-between p-2 rounded-xl hover:bg-cream border border-transparent hover:border-black cursor-pointer transition"
+                            >
+                              <div className="flex items-center gap-2.5">
+                                <div
+                                  className={`w-7 h-7 rounded-lg border border-black flex items-center justify-center shrink-0 shadow-neo-xs ${s.color}`}
+                                >
+                                  <Icon className="w-4 h-4 stroke-[2.2]" />
+                                </div>
+                                <div>
+                                  <div className="text-xs font-black text-black">{s.title}</div>
+                                  <div className="text-[11px] text-gray-600 line-clamp-1">{s.desc}</div>
+                                </div>
+                              </div>
+                              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-lime border border-black">
+                                {s.badge}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Category 2: Family Members */}
+                  {matchedMembers.length > 0 && (
+                    <div className="p-2 border-b border-gray-200">
+                      <div className="px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-gray-500">
+                        Family Members
+                      </div>
+                      <div className="space-y-1">
+                        {matchedMembers.map((m) => (
+                          <div
+                            key={m.id}
+                            onClick={() => {
+                              navigate('/family');
+                              setIsSearchOpen(false);
+                              setSearchVal('');
+                            }}
+                            className="flex items-center justify-between p-2 rounded-xl hover:bg-cream border border-transparent hover:border-black cursor-pointer transition"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-7 h-7 rounded-lg bg-cyan border border-black flex items-center justify-center font-black text-xs text-black shadow-neo-xs">
+                                {m.name.charAt(0).toUpperCase()}
+                              </div>
+                              <div>
+                                <div className="text-xs font-black text-black">{m.name}</div>
+                                <div className="text-[11px] text-gray-600">{m.relationship || 'Member'} • {m.email}</div>
+                              </div>
+                            </div>
+                            <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-white border border-black">
+                              Family
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Category 3: Documents */}
+                  {matchedDocs.length > 0 && (
+                    <div className="p-2 border-b border-gray-200">
+                      <div className="px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-gray-500">
+                        Vault Documents
+                      </div>
+                      <div className="space-y-1">
+                        {matchedDocs.map((doc) => (
+                          <div
+                            key={doc.id}
+                            onClick={() => {
+                              navigate(`/documents/${doc.id}`);
+                              setIsSearchOpen(false);
+                              setSearchVal('');
+                            }}
+                            className="flex items-center justify-between p-2 rounded-xl hover:bg-cream border border-transparent hover:border-black cursor-pointer transition"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-7 h-7 rounded-lg bg-pink border border-black flex items-center justify-center shrink-0 shadow-neo-xs">
+                                <FileText className="w-3.5 h-3.5 text-black" />
+                              </div>
+                              <div>
+                                <div className="text-xs font-black text-black">{doc.name}</div>
+                                <div className="text-[11px] text-gray-600 line-clamp-1">
+                                  {doc.category} • {doc.ownerName}
+                                </div>
+                              </div>
+                            </div>
+                            <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-lime border border-black">
+                              View Doc
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Empty state & fallback */}
+                  {matchedShortcuts.length === 0 &&
+                    matchedMembers.length === 0 &&
+                    matchedDocs.length === 0 && (
+                      <div className="p-4 text-center">
+                        <p className="text-xs font-bold text-gray-700">
+                          No quick match for "{searchVal}"
+                        </p>
+                        <p className="text-[11px] text-gray-500 mt-0.5">
+                          Press Enter or click below to search the Documents vault.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={handleSearchSubmit}
+                          className="mt-3 px-4 py-1.5 bg-lime text-black text-xs font-black uppercase tracking-wider rounded-lg border-1.5 border-black shadow-neo-sm hover:bg-lime/80"
+                        >
+                          Search Documents for "{searchVal}" →
+                        </button>
+                      </div>
+                    )}
+
+                  {/* Footer hint */}
+                  <div className="px-3 py-2 bg-cream border-t border-black/10 flex items-center justify-between text-[10px] text-gray-600 font-bold">
+                    <span>Press <kbd className="px-1 py-0.5 bg-white border border-black rounded text-[9px]">Enter</kbd> to jump</span>
+                    <span>Press <kbd className="px-1 py-0.5 bg-white border border-black rounded text-[9px]">Esc</kbd> to close</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
