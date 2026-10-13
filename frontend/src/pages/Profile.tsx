@@ -17,15 +17,16 @@ import { formatDate } from '../utils/helpers';
 import toast from 'react-hot-toast';
 
 const RELATIONSHIPS = [
-  'Father',
-  'Mother',
-  'Spouse',
-  'Son',
+  'Head of Family',
   'Daughter',
-  'Brother',
+  'Mother',
+  'Father',
+  'Son',
   'Sister',
-  'Grandfather',
+  'Brother',
+  'Spouse',
   'Grandmother',
+  'Grandfather',
   'Other',
 ];
 
@@ -49,16 +50,16 @@ export const Profile: React.FC = () => {
         if (res && res.data) {
           setProfile(res.data);
           setName(res.data.name || '');
-          setRelationship(res.data.relationship || RELATIONSHIPS[0]);
+          setRelationship(res.data.relationship || 'Head of Family');
         } else if (user) {
           const fallback: ProfileData = {
             id: user.id,
             name: user.name,
             email: user.email,
-            relationship: 'Father',
+            relationship: 'Head of Family',
             role: 'ADMIN',
-            familyName: family?.familyName || 'Sharma Family',
-            familyCode: family?.familyCode || 'FAM-8X29K',
+            familyName: family?.familyName || 'Family Space',
+            familyCode: family?.familyCode || '',
             joinedAt: user.createdAt || new Date().toISOString(),
           };
           setProfile(fallback);
@@ -79,9 +80,12 @@ export const Profile: React.FC = () => {
     e.preventDefault();
     try {
       setIsSaving(true);
-      await profileService.updateProfile({ name, relationship });
+      const res = await profileService.updateProfile({ name, relationship });
+      if (res && res.data) {
+        setProfile(res.data);
+      }
       await refreshUser();
-      toast.success('Profile details saved!');
+      toast.success('Profile details saved successfully!');
     } catch {
       toast.error('Failed to update profile');
     } finally {
