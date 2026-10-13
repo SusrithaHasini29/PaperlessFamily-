@@ -6,6 +6,15 @@ export interface AuthResponse {
   user: User;
 }
 
+// Generate a stable numeric ID from an email string (deterministic hash)
+const emailToId = (email: string): number => {
+  let hash = 5381;
+  for (let i = 0; i < email.length; i++) {
+    hash = ((hash << 5) + hash) ^ email.charCodeAt(i);
+  }
+  return Math.abs(hash) % 9000000 + 1000000; // Always 7-digit positive number
+};
+
 export const login = async (email: string, password: string): Promise<ApiResponse<AuthResponse>> => {
   const cleanEmail = email.trim().toLowerCase();
 
@@ -22,16 +31,22 @@ export const login = async (email: string, password: string): Promise<ApiRespons
     throw new Error('Static host without backend');
   } catch (err: any) {
     // Static Vercel fallback: isolate session by email
-    const isDemo = cleanEmail.includes('demo') || cleanEmail.includes('sharma');
-    const demoToken = 'jwt-token-' + cleanEmail;
-    const userName = isDemo ? 'Raj Sharma' : (cleanEmail.split('@')[0] || 'User');
-    const user: User = {
-      id: isDemo ? 1 : Math.abs(cleanEmail.split('').reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0)),
-      name: userName,
-      email: cleanEmail,
-      createdAt: new Date().toISOString(),
-    };
 
+    // Try to restore an existing registered user profile for this email
+    const existingUserStr = localStorage.getItem(`paperless_registered_user_${cleanEmail}`);
+    let user: User;
+
+    if (existingUserStr) {
+      try {
+        user = JSON.parse(existingUserStr);
+      } catch {
+        user = buildDefaultUser(cleanEmail);
+      }
+    } else {
+      user = buildDefaultUser(cleanEmail);
+    }
+
+    const demoToken = 'jwt-token-' + cleanEmail;
     localStorage.setItem('token', demoToken);
     localStorage.setItem('paperless_user', JSON.stringify(user));
 
@@ -46,48 +61,58 @@ export const login = async (email: string, password: string): Promise<ApiRespons
     return {
       success: true,
       message: 'Signed in successfully',
-      data: {
-        token: demoToken,
-        user,
-      },
+      data: { token: demoToken, user },
     };
   }
 };
 
+const buildDefaultUser = (cleanEmail: string): User => {
+  const isDemo = cleanEmail.includes('demo') || cleanEmail.includes('sharma');
+  const displayName = isDemo ? 'Raj Sharma' : (cleanEmail.split('@')[0] || 'User');
+  return {
+    id: emailToId(cleanEmail),
+    name: displayName,
+    email: cleanEmail,
+    createdAt: new Date().toISOString(),
+  };
+};
+
 export const register = async (name: string, email: string, password: string): Promise<ApiResponse<AuthResponse>> => {
   const cleanEmail = email.trim().toLowerCase();
+  const cleanName = name.trim() || 'User';
 
   try {
-    const response = await api.post<ApiResponse<AuthResponse>>('/auth/register', { name, email: cleanEmail, password });
+    const response = await api.post<ApiResponse<AuthResponse>>('/auth/register', { name: cleanName, email: cleanEmail, password });
     if (response.data && typeof response.data === 'object' && response.data.data?.token) {
       localStorage.setItem('token', response.data.data.token);
       if (response.data.data.user) {
         localStorage.setItem('paperless_user', JSON.stringify(response.data.data.user));
+        // Save registration profile for future logins
+        localStorage.setItem(`paperless_registered_user_${cleanEmail}`, JSON.stringify(response.data.data.user));
       }
       return response.data;
     }
     throw new Error('Static host without backend');
   } catch (err: any) {
-    const demoToken = 'jwt-token-' + cleanEmail;
     const user: User = {
-      id: Math.abs(cleanEmail.split('').reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0)) || Date.now(),
-      name: name.trim() || 'User',
+      id: emailToId(cleanEmail),
+      name: cleanName,
       email: cleanEmail,
       createdAt: new Date().toISOString(),
     };
 
+    const demoToken = 'jwt-token-' + cleanEmail;
     localStorage.setItem('token', demoToken);
     localStorage.setItem('paperless_user', JSON.stringify(user));
+    // Save registration profile so future logins restore the real name
+    localStorage.setItem(`paperless_registered_user_${cleanEmail}`, JSON.stringify(user));
     // New user starts without a family space until they create or join one
     localStorage.removeItem('paperless_family');
 
     return {
       success: true,
       message: 'Registered successfully',
-      data: {
-        token: demoToken,
-        user,
-      },
+      data: { token: demoToken, user },
     };
   }
 };
@@ -116,13 +141,14 @@ export const getCurrentUser = async (): Promise<ApiResponse<User>> => {
         };
       } catch (e) {}
     }
+    // Last resort: return anonymous user; they'll need to log in
     return {
-      success: true,
-      message: 'Default user',
+      success: false,
+      message: 'Not authenticated',
       data: {
-        id: 1,
-        name: 'Raj Sharma',
-        email: 'demo@paperlessfamily.com',
+        id: 0,
+        name: 'Guest',
+        email: '',
         createdAt: new Date().toISOString(),
       },
     };

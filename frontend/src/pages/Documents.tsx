@@ -53,7 +53,7 @@ type SortOption = 'newest' | 'oldest' | 'name-asc' | 'expiry';
 export const Documents: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { user, family } = useAuth();
+  const { user } = useAuth();
 
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -133,126 +133,22 @@ export const Documents: React.FC = () => {
   const fetchDocuments = useCallback(async () => {
     try {
       setLoading(true);
-      const famId = family?.id || 1;
-      const res = await documentService.getDocuments({ familyId: famId });
-      if (res && res.data) {
+      // Always use the documentService which handles all storage logic
+      // Pass no familyId so the service uses localStorage-scoped lookup
+      const res = await documentService.getDocuments();
+      if (res && Array.isArray(res.data)) {
         setDocuments(res.data);
-      } else if (user?.email === 'demo@paperlessfamily.com') {
-        // Fallback sample data matching prompt for demo account only
-        setDocuments([
-          {
-            id: 1,
-            name: 'Passport',
-            category: 'Identity',
-            subcategory: 'International Travel',
-            ownerName: 'Priya Sharma',
-            ownerId: 2,
-            familyId: 1,
-            fileName: 'priya_passport.pdf',
-            fileType: 'application/pdf',
-            fileSize: 1840000,
-            status: 'EXPIRING_SOON',
-            uploadedAt: '2024-02-10T10:00:00Z',
-            uploadedBy: 'Raj Sharma',
-            expiryDate: '2028-08-18',
-            description: 'Indian Passport 36 pages booklet',
-          },
-          {
-            id: 2,
-            name: 'Health Insurance',
-            category: 'Insurance',
-            subcategory: 'Family Floater',
-            ownerName: 'Raj Sharma',
-            ownerId: 1,
-            familyId: 1,
-            fileName: 'health_insurance.pdf',
-            fileType: 'application/pdf',
-            fileSize: 2450000,
-            status: 'EXPIRING_SOON',
-            uploadedAt: '2024-03-01T10:00:00Z',
-            uploadedBy: 'Raj Sharma',
-            expiryDate: '2027-06-30',
-            description: 'Comprehensive family health insurance',
-          },
-          {
-            id: 3,
-            name: 'Aadhaar Card',
-            category: 'Identity',
-            subcategory: 'National ID',
-            ownerName: 'Raj Sharma',
-            ownerId: 1,
-            familyId: 1,
-            fileName: 'raj_aadhaar.pdf',
-            fileType: 'application/pdf',
-            fileSize: 720000,
-            status: 'ACTIVE',
-            uploadedAt: '2024-01-15T10:00:00Z',
-            uploadedBy: 'Raj Sharma',
-            description: 'UIDAI official identification card',
-          },
-          {
-            id: 4,
-            name: 'Property Document',
-            category: 'Property',
-            subcategory: 'Sale Deed',
-            ownerName: 'Family',
-            ownerId: 1,
-            familyId: 1,
-            fileName: 'property_deed.pdf',
-            fileType: 'application/pdf',
-            fileSize: 5200000,
-            status: 'ACTIVE',
-            uploadedAt: '2024-01-20T10:00:00Z',
-            uploadedBy: 'Raj Sharma',
-            description: 'Residential property registered deed',
-          },
-          {
-            id: 5,
-            name: 'Vehicle Insurance',
-            category: 'Insurance',
-            subcategory: 'Motor Insurance',
-            ownerName: 'Raj Sharma',
-            ownerId: 1,
-            familyId: 1,
-            fileName: 'vehicle_insurance.pdf',
-            fileType: 'application/pdf',
-            fileSize: 1250000,
-            status: 'EXPIRING_SOON',
-            uploadedAt: '2024-03-15T10:00:00Z',
-            uploadedBy: 'Raj Sharma',
-            expiryDate: '2026-11-15',
-            description: 'Car comprehensive insurance policy',
-          },
-          {
-            id: 6,
-            name: 'Electricity Bill',
-            category: 'Bills',
-            subcategory: 'Utility',
-            ownerName: 'Home',
-            ownerId: 1,
-            familyId: 1,
-            fileName: 'electricity_bill.pdf',
-            fileType: 'application/pdf',
-            fileSize: 450000,
-            status: 'ACTIVE',
-            uploadedAt: '2024-04-01T10:00:00Z',
-            uploadedBy: 'Raj Sharma',
-            expiryDate: '2026-10-25',
-            description: 'Monthly BESCOM utility receipt',
-          },
-        ]);
       } else {
         setDocuments([]);
       }
-    } catch {
-      if (user?.email !== 'demo@paperlessfamily.com') {
-        setDocuments([]);
-      }
-      toast.error('Failed to load documents');
+    } catch (err) {
+      console.error('Failed to load documents:', err);
+      setDocuments([]);
+      toast.error('Failed to load documents. Please refresh the page.');
     } finally {
       setLoading(false);
     }
-  }, [family?.id, user?.email]);
+  }, []); // No deps needed - documentService reads from localStorage directly
 
   useEffect(() => {
     fetchDocuments();

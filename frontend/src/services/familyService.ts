@@ -1,5 +1,6 @@
 import api from './api';
 import { Family, FamilyMember, Invitation, ApiResponse } from '../types';
+import { migrateDocsToFamilyKey } from './documentService';
 
 const getCurrentUser = () => {
   try {
@@ -24,6 +25,8 @@ export const createFamily = async (familyName: string): Promise<ApiResponse<Fami
     if (response.data && response.data.data?.id) {
       localStorage.setItem(`paperless_family_${email}`, JSON.stringify(response.data.data));
       localStorage.setItem('paperless_family', JSON.stringify(response.data.data));
+      // Migrate any docs uploaded before family creation
+      migrateDocsToFamilyKey();
       return response.data;
     }
   } catch (e) {}
@@ -59,6 +62,9 @@ export const createFamily = async (familyName: string): Promise<ApiResponse<Fami
     joinedAt: new Date().toISOString(),
   };
   localStorage.setItem(`paperless_members_${cleanCode}`, JSON.stringify([initialMember]));
+
+  // CRITICAL: Migrate any documents uploaded before family creation into the family key
+  migrateDocsToFamilyKey();
 
   return {
     success: true,
@@ -337,6 +343,9 @@ export const joinFamily = async (familyCode: string): Promise<ApiResponse<Family
     });
     localStorage.setItem(`paperless_members_${cleanCode}`, JSON.stringify(membersList));
   }
+
+  // CRITICAL: Migrate any documents uploaded before joining into the shared family key
+  migrateDocsToFamilyKey();
 
   return {
     success: true,
