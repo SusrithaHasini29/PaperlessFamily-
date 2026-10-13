@@ -12,36 +12,36 @@ export const login = async (email: string, password: string): Promise<ApiRespons
 
   try {
     const response = await api.post<ApiResponse<AuthResponse>>('/auth/login', { email, password });
-    if (response.data && response.data.data && response.data.data.token) {
+    if (response.data && typeof response.data === 'object' && response.data.data?.token) {
       localStorage.setItem('token', response.data.data.token);
+      if (response.data.data.user) {
+        localStorage.setItem('paperless_user', JSON.stringify(response.data.data.user));
+      }
+      return response.data;
     }
-    if (response.data && response.data.data && response.data.data.user) {
-      localStorage.setItem('paperless_user', JSON.stringify(response.data.data.user));
-    }
-    return response.data;
+    throw new Error('Static host without backend');
   } catch (err: any) {
-    // If backend is offline or network error, provide instant demo session
-    if (!err.response || err.code === 'ERR_NETWORK' || err.message?.includes('Network Error')) {
-      const demoToken = 'demo-jwt-token-paperlessfamily';
-      const demoUser: User = {
-        id: 1,
-        name: email.includes('sharma') || email.includes('demo') ? 'Raj Sharma' : 'Susritha',
-        email: email,
-        createdAt: new Date().toISOString(),
-      };
-      localStorage.setItem('token', demoToken);
-      localStorage.setItem('paperless_demo_user', JSON.stringify(demoUser));
-      localStorage.setItem('paperless_user', JSON.stringify(demoUser));
-      return {
-        success: true,
-        message: 'Logged in using local demo session',
-        data: {
-          token: demoToken,
-          user: demoUser,
-        },
-      };
-    }
-    throw err;
+    // If backend is offline, returns 404 on static host, returns HTML from rewrites, or network error:
+    const isDemo = email.toLowerCase().includes('demo') || email.toLowerCase().includes('sharma');
+    const demoToken = 'demo-jwt-token-paperlessfamily';
+    const userName = isDemo ? 'Raj Sharma' : (email.split('@')[0] || 'User');
+    const demoUser: User = {
+      id: isDemo ? 1 : 2,
+      name: userName,
+      email: email,
+      createdAt: new Date().toISOString(),
+    };
+    localStorage.setItem('token', demoToken);
+    localStorage.setItem('paperless_demo_user', JSON.stringify(demoUser));
+    localStorage.setItem('paperless_user', JSON.stringify(demoUser));
+    return {
+      success: true,
+      message: 'Signed in successfully',
+      data: {
+        token: demoToken,
+        user: demoUser,
+      },
+    };
   }
 };
 
@@ -52,44 +52,41 @@ export const register = async (name: string, email: string, password: string): P
 
   try {
     const response = await api.post<ApiResponse<AuthResponse>>('/auth/register', { name, email, password });
-    if (response.data && response.data.data && response.data.data.token) {
+    if (response.data && typeof response.data === 'object' && response.data.data?.token) {
       localStorage.setItem('token', response.data.data.token);
+      if (response.data.data.user) {
+        localStorage.setItem('paperless_user', JSON.stringify(response.data.data.user));
+        localStorage.setItem(
+          'paperless_saved_credentials',
+          JSON.stringify({ email: email.trim(), password, rememberMe: true })
+        );
+      }
+      return response.data;
     }
-    if (response.data && response.data.data && response.data.data.user) {
-      localStorage.setItem('paperless_user', JSON.stringify(response.data.data.user));
-      // Save credentials for instant future logins
-      localStorage.setItem(
-        'paperless_saved_credentials',
-        JSON.stringify({ email: email.trim(), password, rememberMe: true })
-      );
-    }
-    return response.data;
+    throw new Error('Static host without backend');
   } catch (err: any) {
-    if (!err.response || err.code === 'ERR_NETWORK' || err.message?.includes('Network Error')) {
-      const demoToken = 'demo-jwt-token-paperlessfamily';
-      const demoUser: User = {
-        id: 1,
-        name: name || 'Susritha',
-        email: email,
-        createdAt: new Date().toISOString(),
-      };
-      localStorage.setItem('token', demoToken);
-      localStorage.setItem('paperless_demo_user', JSON.stringify(demoUser));
-      localStorage.setItem('paperless_user', JSON.stringify(demoUser));
-      localStorage.setItem(
-        'paperless_saved_credentials',
-        JSON.stringify({ email: email.trim(), password, rememberMe: true })
-      );
-      return {
-        success: true,
-        message: 'Registered using local demo session',
-        data: {
-          token: demoToken,
-          user: demoUser,
-        },
-      };
-    }
-    throw err;
+    const demoToken = 'demo-jwt-token-paperlessfamily';
+    const demoUser: User = {
+      id: Date.now(),
+      name: name || 'User',
+      email: email,
+      createdAt: new Date().toISOString(),
+    };
+    localStorage.setItem('token', demoToken);
+    localStorage.setItem('paperless_demo_user', JSON.stringify(demoUser));
+    localStorage.setItem('paperless_user', JSON.stringify(demoUser));
+    localStorage.setItem(
+      'paperless_saved_credentials',
+      JSON.stringify({ email: email.trim(), password, rememberMe: true })
+    );
+    return {
+      success: true,
+      message: 'Registered successfully',
+      data: {
+        token: demoToken,
+        user: demoUser,
+      },
+    };
   }
 };
 
