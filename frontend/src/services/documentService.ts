@@ -159,12 +159,10 @@ startxref
 const getBaseDocuments = (): Document[] => {
   const userStr = localStorage.getItem('paperless_user');
   let isDemo = false;
-  let userName = 'ushaswini';
 
   if (userStr) {
     try {
       const u = JSON.parse(userStr);
-      if (u.name) userName = u.name;
       isDemo = (u.email || '').toLowerCase().includes('demo') || (u.email || '').toLowerCase().includes('sharma');
     } catch {}
   }
@@ -178,24 +176,8 @@ const getBaseDocuments = (): Document[] => {
     ];
   }
 
-  return [
-    {
-      id: 13,
-      name: 'Relieving[23MIC7028]',
-      category: 'Identity',
-      subcategory: 'Aadhaar',
-      ownerName: userName,
-      ownerId: 1,
-      familyId: 1,
-      fileName: 'Relieving[23MIC7028].pdf',
-      fileType: 'application/pdf',
-      fileSize: 123851,
-      status: 'ACTIVE',
-      uploadedAt: '2026-03-10T12:00:00.000Z',
-      uploadedBy: userName,
-      description: 'Official Relieving Order and Experience Certificate verifying credentials and tenure at Dridha Technologies.',
-    },
-  ];
+  // Real user accounts start completely clean with zero mock documents
+  return [];
 };
 
 // ==========================================
@@ -224,12 +206,15 @@ export const getDocuments = async (params?: DocumentQueryParams): Promise<ApiRes
     }
   } catch (e) {}
 
-  // 2. Fallback for static Vercel deployment: combine localStorage uploaded documents + base documents
+  // 2. Fallback for static Vercel deployment: load user's real uploaded documents
   let storedDocs: Document[] = [];
   try {
     const storedStr = localStorage.getItem('paperless_stored_documents');
     if (storedStr) {
       storedDocs = JSON.parse(storedStr);
+      // Clean out any legacy mock document (id 13 or Relieving placeholder)
+      storedDocs = storedDocs.filter(d => d.id !== 13 && !d.name.includes('Relieving[23MIC7028]'));
+      localStorage.setItem('paperless_stored_documents', JSON.stringify(storedDocs));
     }
   } catch (e) {}
 

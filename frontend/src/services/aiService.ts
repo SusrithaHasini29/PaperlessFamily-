@@ -51,9 +51,9 @@ export const sendMessage = async (
   } else if (lower.includes("all document") || lower.includes("list document") || lower.includes("what document") || lower.includes("my document")) {
     if (userDocs.length > 0) {
       const list = userDocs.map((d, i) => `${i + 1}. **${d.name}** (${d.category}) - ${d.ownerName || 'Self'}`).join('\n');
-      aiText = `📁 **Documents in your Vault** (${userDocs.length} uploaded):\n\n${list}\n\nPlus verified record: **Relieving[23MIC7028]** (Aadhaar / Identity).`;
+      aiText = `📁 **Documents in your Vault** (${userDocs.length} uploaded):\n\n${list}`;
     } else {
-      aiText = "📁 **Documents in your Vault**:\n\n1. **Relieving[23MIC7028]** (Identity / Aadhaar) - ushaswini\n\nYou can upload more documents anytime using the **Upload Document** button!";
+      aiText = "📁 **Your Vault is Empty**\n\nYou haven't uploaded any documents yet. Click **Upload Document** to store your first family record!";
     }
   } else if (lower.includes("expir") || lower.includes("renew")) {
     const expiring = userDocs.filter(d => d.status === 'EXPIRING_SOON' || d.status === 'EXPIRED');
@@ -68,14 +68,19 @@ export const sendMessage = async (
       const latest = userDocs[0];
       aiText = `📄 **Document Summary for ${latest.name}**:\n\n• **Title**: ${latest.name}\n• **Owner**: ${latest.ownerName || 'Family Member'}\n• **Category**: ${latest.category}\n• **File Name**: ${latest.fileName}\n• **Uploaded**: ${new Date(latest.uploadedAt).toLocaleDateString()}\n• **Notes**: ${latest.description || 'Verified and safely encrypted in your vault.'}`;
     } else {
-      aiText = "📄 **Document Summary**:\n\n• **Title**: Relieving[23MIC7028]\n• **Category**: Identity (Aadhaar)\n• **Issuer**: DRIDHA TECHNOLOGIES (Hyderabad)\n• **Tenure**: May 18, 2026 – July 10, 2026\n• **Role**: AI Engineer Intern\n• **Status**: ACTIVE & Verified";
+      aiText = "📄 You haven't uploaded any documents to summarize yet. Click **Upload Document** to add your first record!";
     }
   } else if (lower.includes("remind")) {
     aiText = "⏰ **Automated Expiry Reminders**: PaperlessFamily continuously monitors your vault. When you upload paperwork with an expiration date, reminders are automatically sent 30 days in advance!";
   } else if (lower.includes("mom") || lower.includes("mother")) {
-    aiText = "ℹ️ **sujatha** (*Mother*) is registered in your family space. You can assign uploaded documents to her from the Document Owner dropdown!";
+    aiText = "ℹ️ You can add family members and assign documents to them from the **Family** tab!";
   } else if (lower.includes("who is in") || lower.includes("family member") || lower.includes("members")) {
-    aiText = "👨‍👩‍👧‍👦 **Family Members**:\n• **ushaswini** (Head of Family - ADMIN)\n• **sujatha** (Mother - ADMIN)\n🔑 Family Code: `FAM-USHAS`";
+    const userStr = localStorage.getItem('paperless_user');
+    const uName = userStr ? (JSON.parse(userStr).name || 'You') : 'You';
+    const famStr = localStorage.getItem('paperless_family');
+    const fName = famStr ? (JSON.parse(famStr).familyName || 'Family Space') : 'Family Space';
+    const fCode = famStr ? (JSON.parse(famStr).familyCode || 'FAM-CODE') : 'FAM-CODE';
+    aiText = `👨‍👩‍👧‍👦 **${fName}**:\n• **${uName}** (Head of Family - ADMIN)\n🔑 Family Code: \`${fCode}\``;
   }
 
   return {
