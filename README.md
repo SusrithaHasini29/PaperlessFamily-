@@ -1,4 +1,4 @@
-# 🏠 PaperlessFamily
+# PaperlessFamily
 
 > *"Your Family. Your Documents. One Secure Home."*
 
@@ -13,26 +13,26 @@
 
 ---
 
-## 📋 Overview
+## Overview
 
 **PaperlessFamily** is an enterprise-grade digital family document management platform engineered to provide a single, encrypted, and intelligently organized digital hub for households. From health records and property deeds to passports, tax filings, and insurance policies, PaperlessFamily guarantees zero lost files, automated expiration tracking, role-based family access, and contextual AI assistance.
 
 ---
 
-## ✨ Features
+## Features
 
-- 👨‍👩‍👧‍👦 **Family Space Management**: Organize documents by individual family members or unified household spaces.
-- 📄 **Digital Document Management (15+ categories)**: Pre-classified categories including Identity, Medical, Insurance, Property, Taxes, Education, Automobile, and Finance.
-- 🤖 **AI-Powered Document Assistant (FamilyAI)**: Context-aware query answering powered by Google Gemini API for policy limits, expiry analysis, and summary generation.
-- ⏰ **Document Expiry Tracking & Alerts**: Automated triggers and dashboard counters for impending expirations (30, 60, and 90 days out).
-- 🔍 **Smart Search & Filtering**: Multi-dimensional filtering across tags, document owners, upload dates, expiration status, and full text.
-- 🔐 **Secure JWT Authentication**: Role-based access control, cryptographic token generation, and BCrypt password encryption.
-- 📱 **Responsive Design**: Designed with modern mobile-first principles using Tailwind CSS and Framer Motion transitions.
-- 🔔 **Real-time Notifications**: Immediate alerts for upload events, member additions, and urgent expiration thresholds.
+-  **Family Space Management**: Organize documents by individual family members or unified household spaces.
+- **Digital Document Management (15+ categories)**: Pre-classified categories including Identity, Medical, Insurance, Property, Taxes, Education, Automobile, and Finance.
+-  **AI-Powered Document Assistant (FamilyAI)**: Context-aware query answering powered by Google Gemini API for policy limits, expiry analysis, and summary generation.
+-  **Document Expiry Tracking & Alerts**: Automated triggers and dashboard counters for impending expirations (30, 60, and 90 days out).
+-  **Smart Search & Filtering**: Multi-dimensional filtering across tags, document owners, upload dates, expiration status, and full text.
+-  **Secure JWT Authentication**: Role-based access control, cryptographic token generation, and BCrypt password encryption.
+-  **Responsive Design**: Designed with modern mobile-first principles using Tailwind CSS and Framer Motion transitions.
+-  **Real-time Notifications**: Immediate alerts for upload events, member additions, and urgent expiration thresholds.
 
 ---
 
-## 🏗️ Architecture
+##  Architecture
 
 ```
                                       +-------------------------+
@@ -68,7 +68,7 @@
 
 ---
 
-## 🛠️ Tech Stack
+##  Tech Stack
 
 ### Frontend
 - **Framework**: React 18 with TypeScript
@@ -101,7 +101,7 @@
 
 ---
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 PaperlessFamily/
@@ -140,7 +140,7 @@ PaperlessFamily/
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### Prerequisites
 - **Java**: OpenJDK / Eclipse Temurin 17 or higher
@@ -195,7 +195,7 @@ Copy `.env.example` to `.env` in the root and customize:
 
 ---
 
-## 🐳 Docker Setup
+##  Docker Setup
 
 Run the full stack (PostgreSQL, Spring Boot backend, and React frontend) in a single command using Docker Compose:
 
@@ -215,7 +215,7 @@ docker-compose down
 
 ---
 
-## 🔄 Jenkins CI/CD Pipeline
+##  Jenkins CI/CD Pipeline
 
 The Jenkinsfile contains an end-to-end declarative pipeline running automated builds, tests, containerization, image publishing, and rolling Kubernetes deployments:
 
@@ -254,7 +254,7 @@ Configure these in **Jenkins > Manage Jenkins > Credentials**:
 
 ---
 
-## ☸️ Kubernetes Deployment
+##  Kubernetes Deployment
 
 Deploy the system to a local Minikube cluster or managed cloud Kubernetes (EKS, GKE, AKS):
 
@@ -277,7 +277,7 @@ minikube service paperlessfamily-frontend -n paperlessfamily
 
 ---
 
-## 🧪 Testing
+##  Testing
 
 Execute backend test suites including JPA repository tests, controller integrations, and security filter tests:
 
@@ -290,7 +290,7 @@ Surefire XML reports are output to `backend/target/surefire-reports/`.
 
 ---
 
-## 🔐 Security Architecture
+##  Security Architecture
 
 - **Stateless JWT Tokens**: Cryptographically signed HMAC-SHA256 tokens with configurable expiration.
 - **BCrypt Password Hashing**: Passwords salted and hashed with computational work factor 10.
@@ -301,7 +301,7 @@ Surefire XML reports are output to `backend/target/surefire-reports/`.
 
 ---
 
-## 📊 API Endpoints
+##  API Endpoints
 
 | Method | Endpoint | Description | Auth Required |
 | :--- | :--- | :--- | :--- |
@@ -321,7 +321,7 @@ Surefire XML reports are output to `backend/target/surefire-reports/`.
 
 ---
 
-## 🎮 Demo Account
+##  Demo Account
 
 The pre-seeded database contains a ready-to-test demonstration family account:
 
@@ -332,7 +332,7 @@ The pre-seeded database contains a ready-to-test demonstration family account:
 
 ---
 
-## 🤖 AI Assistant Examples (FamilyAI)
+##  AI Assistant Examples (FamilyAI)
 
 **Prompt**:
 > *"When does Aarav's passport expire, and what are the renewal requirements?"*
@@ -350,18 +350,18 @@ The pre-seeded database contains a ready-to-test demonstration family account:
 
 ---
 
-## 📸 Screenshots
+##  Screenshots
 
 *(Visual demonstration of Dashboard, Document Vault, AI Assistant, and Expiry Tracker)*
 
 ```
 +-------------------------------------------------------------------------------+
-|  🏠 PaperlessFamily                     [Search Documents...]  (🔔) [Profile] |
+|   PaperlessFamily                     [Search Documents...]   [Profile] |
 +-------------------------------------------------------------------------------+
 |  [Summary]                  [Recent Documents]          [Expiry Alerts]       |
-|  Total Documents: 42        • Health_Insurance.pdf      ⚠️ Car_Insurance.pdf  |
+|  Total Documents: 42        • Health_Insurance.pdf       Car_Insurance.pdf  |
 |  Family Members: 4          • Tax_Return_2025.pdf          (Expires in 12 days|
-|  Expiring Soon: 3           • House_Deed_Scan.pdf       ⚠️ Visa_Rahul.pdf     |
+|  Expiring Soon: 3           • House_Deed_Scan.pdf        Visa_Rahul.pdf     |
 +-------------------------------------------------------------------------------+
 |  FamilyAI: "How can I help you find or understand your family documents?"     |
 +-------------------------------------------------------------------------------+
@@ -369,16 +369,16 @@ The pre-seeded database contains a ready-to-test demonstration family account:
 
 ---
 
-## 🚀 Future Enhancements
+##  Future Enhancements
 
-- ☁️ **Cloud Object Store**: Native adapters for AWS S3, Google Cloud Storage, and Azure Blob.
-- 🔍 **Automated OCR Scanning**: Tesseract / Google Cloud Vision OCR for instant text extraction from scanned receipts.
-- 🔗 **Secure Document Sharing Links**: Expiring, password-protected download URLs for third parties (banks, accountants).
-- 📱 **Mobile Native Client**: React Native application with document camera scanner.
-- 📬 **Omnichannel Alerts**: Email and WhatsApp webhook notifications for expiry deadlines.
-- 🔐 **Multi-Factor Authentication (MFA)**: TOTP / Authenticator app support.
-- 📜 **Version History & Audit Log**: Audit trail recording which family member viewed or updated files.
-- 💰 **Family Budget & Expense Tracker**: Auto-categorization of utility bills and expenses.
+-  **Cloud Object Store**: Native adapters for AWS S3, Google Cloud Storage, and Azure Blob.
+-  **Automated OCR Scanning**: Tesseract / Google Cloud Vision OCR for instant text extraction from scanned receipts.
+-  **Secure Document Sharing Links**: Expiring, password-protected download URLs for third parties (banks, accountants).
+-  **Mobile Native Client**: React Native application with document camera scanner.
+-  **Omnichannel Alerts**: Email and WhatsApp webhook notifications for expiry deadlines.
+-  **Multi-Factor Authentication (MFA)**: TOTP / Authenticator app support.
+-  **Version History & Audit Log**: Audit trail recording which family member viewed or updated files.
+-  **Family Budget & Expense Tracker**: Auto-categorization of utility bills and expenses.
 
 ---
 
