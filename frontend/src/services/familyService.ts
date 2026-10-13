@@ -1,21 +1,38 @@
 import api from './api';
 import { Family, FamilyMember, Invitation, ApiResponse } from '../types';
 
+const getCurrentUser = () => {
+  try {
+    const userStr = localStorage.getItem('paperless_user');
+    if (userStr) return JSON.parse(userStr);
+  } catch {}
+  return null;
+};
+
+const getCurrentUserEmail = (): string => {
+  const u = getCurrentUser();
+  return u?.email ? u.email.trim().toLowerCase() : 'default';
+};
+
 export const createFamily = async (familyName: string): Promise<ApiResponse<Family>> => {
-  // 1. Try backend API
+  const user = getCurrentUser();
+  const email = getCurrentUserEmail();
+
+  // Try backend first
   try {
     const response = await api.post<ApiResponse<Family>>('/families', { familyName });
     if (response.data && response.data.data?.id) {
+      localStorage.setItem(`paperless_family_${email}`, JSON.stringify(response.data.data));
       localStorage.setItem('paperless_family', JSON.stringify(response.data.data));
       return response.data;
     }
   } catch (e) {}
 
-  // 2. Offline / Vercel static fallback
+  // Static/offline creation scoped strictly to this user
   const cleanCode =
     'FAM-' +
     (familyName.substring(0, 4).toUpperCase().replace(/[^A-Z]/g, '') || 'HOME') +
-    Math.random().toString(36).substring(2, 4).toUpperCase();
+    Math.random().toString(36).substring(2, 5).toUpperCase();
 
   const newFamily: Family = {
     id: Date.now(),
@@ -24,33 +41,24 @@ export const createFamily = async (familyName: string): Promise<ApiResponse<Fami
     createdAt: new Date().toISOString(),
     memberCount: 1,
   };
+
+  // Save for this user and also index by code for joining
+  localStorage.setItem(`paperless_family_${email}`, JSON.stringify(newFamily));
+  localStorage.setItem(`paperless_family_code_${cleanCode}`, JSON.stringify(newFamily));
   localStorage.setItem('paperless_family', JSON.stringify(newFamily));
 
-  // Also setup current user as the Admin in members list
-  const userStr = localStorage.getItem('paperless_user');
-  let currentUserName = 'Family Admin';
-  let currentUserEmail = 'admin@family.com';
-  let userId = 1;
-  if (userStr) {
-    try {
-      const u = JSON.parse(userStr);
-      if (u.name) currentUserName = u.name;
-      if (u.email) currentUserEmail = u.email;
-      if (u.id) userId = u.id;
-    } catch (e) {}
-  }
-
+  // Initialize members list for this family
   const initialMember: FamilyMember = {
     id: Date.now(),
-    userId,
-    name: currentUserName,
-    email: currentUserEmail,
+    userId: user?.id || 1,
+    name: user?.name || 'Head of Family',
+    email: user?.email || email,
     relationship: 'Head of Family',
     role: 'ADMIN',
     documentCount: 0,
     joinedAt: new Date().toISOString(),
   };
-  localStorage.setItem('paperless_family_members', JSON.stringify([initialMember]));
+  localStorage.setItem(`paperless_members_${cleanCode}`, JSON.stringify([initialMember]));
 
   return {
     success: true,
@@ -60,51 +68,57 @@ export const createFamily = async (familyName: string): Promise<ApiResponse<Fami
 };
 
 export const getMyFamily = async (): Promise<ApiResponse<Family>> => {
+  const email = getCurrentUserEmail();
+
   try {
     const response = await api.get<ApiResponse<Family>>('/families/current');
     if (response.data && response.data.data) {
+      localStorage.setItem(`paperless_family_${email}`, JSON.stringify(response.data.data));
       localStorage.setItem('paperless_family', JSON.stringify(response.data.data));
       return response.data;
     }
   } catch (err: any) {}
 
-  const cached = localStorage.getItem('paperless_family');
-  if (cached) {
+  // 1. Look up user-specific family
+  const userFamilyStr = localStorage.getItem(`paperless_family_${email}`);
+  if (userFamilyStr) {
     try {
+      const parsed = JSON.parse(userFamilyStr);
+      localStorage.setItem('paperless_family', userFamilyStr);
       return {
         success: true,
-        message: 'Loaded cached family',
-        data: JSON.parse(cached),
+        message: 'Loaded user family',
+        data: parsed,
       };
     } catch (e) {}
   }
 
-  const userStr = localStorage.getItem('paperless_user');
-  let famName = 'Family Vault';
-  if (userStr) {
-    try {
-      const u = JSON.parse(userStr);
-      if (u.name) famName = u.name + ' Family';
-    } catch (e) {}
+  // 2. Demo account fallback
+  if (email.includes('demo') || email.includes('sharma')) {
+    const demoFamily: Family = {
+      id: 1,
+      familyName: 'Sharma Family',
+      familyCode: 'FAM-SHARM',
+      createdAt: '2026-01-01T00:00:00Z',
+      memberCount: 4,
+    };
+    localStorage.setItem(`paperless_family_${email}`, JSON.stringify(demoFamily));
+    localStorage.setItem('paperless_family', JSON.stringify(demoFamily));
+    return {
+      success: true,
+      message: 'Demo family',
+      data: demoFamily,
+    };
   }
 
-  const defaultFamily: Family = {
-    id: 1,
-    familyName: famName,
-    familyCode: 'FAM-' + Math.random().toString(36).substring(2, 7).toUpperCase(),
-    createdAt: new Date().toISOString(),
-    memberCount: 1,
-  };
-  localStorage.setItem('paperless_family', JSON.stringify(defaultFamily));
-
-  return {
-    success: true,
-    message: 'Family space',
-    data: defaultFamily,
-  };
+  // If user has not created or joined a family, throw to show the "Create Space" setup card
+  throw new Error('No family space found for current user');
 };
 
 export const getFamilyMembers = async (familyId: number): Promise<ApiResponse<FamilyMember[]>> => {
+  const user = getCurrentUser();
+  const email = getCurrentUserEmail();
+
   try {
     const response = await api.get<ApiResponse<FamilyMember[]>>(`/families/${familyId}/members`);
     if (response.data && typeof response.data === 'object' && Array.isArray(response.data.data)) {
@@ -112,34 +126,31 @@ export const getFamilyMembers = async (familyId: number): Promise<ApiResponse<Fa
     }
   } catch (e) {}
 
-  // Check stored members
-  try {
-    const stored = localStorage.getItem('paperless_family_members');
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return { success: true, message: 'Family members', data: parsed };
-      }
-    }
-  } catch (e) {}
-
-  const userStr = localStorage.getItem('paperless_user');
-  let currentUserName = 'User';
-  let currentUserEmail = 'user@example.com';
-  let isDemo = false;
-  if (userStr) {
+  // Check active family code
+  let familyCode = '';
+  const famStr = localStorage.getItem(`paperless_family_${email}`) || localStorage.getItem('paperless_family');
+  if (famStr) {
     try {
-      const u = JSON.parse(userStr);
-      if (u.name) currentUserName = u.name;
-      if (u.email) currentUserEmail = u.email;
-      isDemo = currentUserEmail.toLowerCase().includes('demo') || currentUserEmail.toLowerCase().includes('sharma');
+      familyCode = JSON.parse(famStr).familyCode;
     } catch (e) {}
   }
 
-  if (isDemo) {
+  if (familyCode) {
+    const stored = localStorage.getItem(`paperless_members_${familyCode}`);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return { success: true, message: 'Family members', data: parsed };
+        }
+      } catch (e) {}
+    }
+  }
+
+  if (email.includes('demo') || email.includes('sharma')) {
     return {
       success: true,
-      message: 'Family members',
+      message: 'Demo members',
       data: [
         { id: 1, userId: 1, name: 'Raj Sharma', email: 'demo@paperlessfamily.com', relationship: 'Father', role: 'ADMIN', documentCount: 3, joinedAt: '2026-01-01' },
         { id: 2, userId: 2, name: 'Priya Sharma', email: 'priya@sharma.com', relationship: 'Mother', role: 'MEMBER', documentCount: 3, joinedAt: '2026-01-02' },
@@ -150,9 +161,21 @@ export const getFamilyMembers = async (familyId: number): Promise<ApiResponse<Fa
   }
 
   const defaultMembers: FamilyMember[] = [
-    { id: 1, userId: 1, name: currentUserName, email: currentUserEmail, relationship: 'Head of Family', role: 'ADMIN', documentCount: 1, joinedAt: new Date().toISOString() },
+    {
+      id: user?.id || 1,
+      userId: user?.id || 1,
+      name: user?.name || 'Head of Family',
+      email: user?.email || email,
+      relationship: 'Head of Family',
+      role: 'ADMIN',
+      documentCount: 0,
+      joinedAt: new Date().toISOString(),
+    },
   ];
-  localStorage.setItem('paperless_family_members', JSON.stringify(defaultMembers));
+
+  if (familyCode) {
+    localStorage.setItem(`paperless_members_${familyCode}`, JSON.stringify(defaultMembers));
+  }
 
   return {
     success: true,
@@ -170,6 +193,15 @@ export const addMember = async (
     if (response.data && response.data.data) return response.data;
   } catch (e) {}
 
+  const email = getCurrentUserEmail();
+  let familyCode = '';
+  const famStr = localStorage.getItem(`paperless_family_${email}`) || localStorage.getItem('paperless_family');
+  if (famStr) {
+    try {
+      familyCode = JSON.parse(famStr).familyCode;
+    } catch (e) {}
+  }
+
   const membersRes = await getFamilyMembers(familyId);
   const currentMembers = membersRes.data || [];
   const newMember: FamilyMember = {
@@ -183,7 +215,11 @@ export const addMember = async (
     joinedAt: new Date().toISOString(),
   };
   const updated = [...currentMembers, newMember];
-  localStorage.setItem('paperless_family_members', JSON.stringify(updated));
+
+  if (familyCode) {
+    localStorage.setItem(`paperless_members_${familyCode}`, JSON.stringify(updated));
+  }
+
   return { success: true, message: 'Member added successfully', data: newMember };
 };
 
@@ -197,12 +233,23 @@ export const updateMember = async (
     if (response.data && response.data.data) return response.data;
   } catch (e) {}
 
+  const email = getCurrentUserEmail();
+  let familyCode = '';
+  const famStr = localStorage.getItem(`paperless_family_${email}`) || localStorage.getItem('paperless_family');
+  if (famStr) {
+    try {
+      familyCode = JSON.parse(famStr).familyCode;
+    } catch (e) {}
+  }
+
   const membersRes = await getFamilyMembers(familyId);
   const currentMembers = membersRes.data || [];
   const idx = currentMembers.findIndex(m => m.id === memberId);
   if (idx !== -1) {
     currentMembers[idx] = { ...currentMembers[idx], ...data };
-    localStorage.setItem('paperless_family_members', JSON.stringify(currentMembers));
+    if (familyCode) {
+      localStorage.setItem(`paperless_members_${familyCode}`, JSON.stringify(currentMembers));
+    }
     return { success: true, message: 'Member updated', data: currentMembers[idx] };
   }
 
@@ -218,35 +265,83 @@ export const removeMember = async (
     if (response.data) return response.data;
   } catch (e) {}
 
+  const email = getCurrentUserEmail();
+  let familyCode = '';
+  const famStr = localStorage.getItem(`paperless_family_${email}`) || localStorage.getItem('paperless_family');
+  if (famStr) {
+    try {
+      familyCode = JSON.parse(famStr).familyCode;
+    } catch (e) {}
+  }
+
   const membersRes = await getFamilyMembers(familyId);
   const currentMembers = membersRes.data || [];
   const filtered = currentMembers.filter(m => m.id !== memberId);
-  localStorage.setItem('paperless_family_members', JSON.stringify(filtered));
+  if (familyCode) {
+    localStorage.setItem(`paperless_members_${familyCode}`, JSON.stringify(filtered));
+  }
 
   return { success: true, message: 'Member removed', data: undefined };
 };
 
 export const joinFamily = async (familyCode: string): Promise<ApiResponse<Family>> => {
+  const email = getCurrentUserEmail();
+  const cleanCode = familyCode.trim().toUpperCase();
+
   try {
-    const response = await api.post<ApiResponse<Family>>('/families/join', { familyCode });
+    const response = await api.post<ApiResponse<Family>>('/families/join', { familyCode: cleanCode });
     if (response.data && response.data.data?.id) {
+      localStorage.setItem(`paperless_family_${email}`, JSON.stringify(response.data.data));
       localStorage.setItem('paperless_family', JSON.stringify(response.data.data));
       return response.data;
     }
   } catch (e) {}
 
-  const joinedFam: Family = {
-    id: Date.now(),
-    familyName: 'Household Space',
-    familyCode: familyCode.trim().toUpperCase(),
-    createdAt: new Date().toISOString(),
-    memberCount: 2,
-  };
-  localStorage.setItem('paperless_family', JSON.stringify(joinedFam));
+  // Look up family by code in local store
+  const existingFamStr = localStorage.getItem(`paperless_family_code_${cleanCode}`);
+  let targetFamily: Family;
+  if (existingFamStr) {
+    targetFamily = JSON.parse(existingFamStr);
+  } else {
+    targetFamily = {
+      id: Date.now(),
+      familyName: 'Joined Family',
+      familyCode: cleanCode,
+      createdAt: new Date().toISOString(),
+      memberCount: 2,
+    };
+  }
+
+  localStorage.setItem(`paperless_family_${email}`, JSON.stringify(targetFamily));
+  localStorage.setItem('paperless_family', JSON.stringify(targetFamily));
+
+  // Add user to the members list of that family code
+  const user = getCurrentUser();
+  const membersStr = localStorage.getItem(`paperless_members_${cleanCode}`);
+  let membersList: FamilyMember[] = [];
+  if (membersStr) {
+    try {
+      membersList = JSON.parse(membersStr);
+    } catch (e) {}
+  }
+  if (!membersList.some(m => m.email === email)) {
+    membersList.push({
+      id: Date.now(),
+      userId: user?.id || Date.now(),
+      name: user?.name || 'New Member',
+      email: user?.email || email,
+      relationship: 'Member',
+      role: 'MEMBER',
+      documentCount: 0,
+      joinedAt: new Date().toISOString(),
+    });
+    localStorage.setItem(`paperless_members_${cleanCode}`, JSON.stringify(membersList));
+  }
+
   return {
     success: true,
-    message: 'Joined family space',
-    data: joinedFam,
+    message: 'Joined family space successfully',
+    data: targetFamily,
   };
 };
 
@@ -259,17 +354,19 @@ export const inviteMember = async (
     if (response.data && response.data.data) return response.data;
   } catch (e) {}
 
-  const invitation: Invitation = {
-    id: Date.now(),
-    email: data.email,
-    relationship: data.relationship,
-    status: 'PENDING',
-    familyName: 'Family Space',
-    invitedBy: 'Family Admin',
-    createdAt: new Date().toISOString(),
+  return {
+    success: true,
+    message: 'Invitation created',
+    data: {
+      id: Date.now(),
+      email: data.email,
+      relationship: data.relationship,
+      status: 'PENDING',
+      familyName: 'Family Space',
+      invitedBy: 'Family Admin',
+      createdAt: new Date().toISOString(),
+    },
   };
-
-  return { success: true, message: 'Invitation created', data: invitation };
 };
 
 export const getInvitations = async (familyId: number): Promise<ApiResponse<Invitation[]>> => {

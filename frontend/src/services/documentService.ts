@@ -13,6 +13,65 @@ export interface DocumentQueryParams {
 const memoryBlobCache = new Map<number, Blob>();
 
 // ==========================================
+// User & Family Scoping Helpers
+// ==========================================
+const getCurrentUserEmail = (): string => {
+  try {
+    const userStr = localStorage.getItem('paperless_user');
+    if (userStr) {
+      const u = JSON.parse(userStr);
+      if (u.email) return u.email.trim().toLowerCase();
+    }
+  } catch {}
+  return 'default';
+};
+
+const getActiveFamilyCode = (): string => {
+  const email = getCurrentUserEmail();
+  try {
+    const famStr = localStorage.getItem(`paperless_family_${email}`) || localStorage.getItem('paperless_family');
+    if (famStr) {
+      const f = JSON.parse(famStr);
+      if (f.familyCode) return f.familyCode.trim().toUpperCase();
+    }
+  } catch {}
+  return '';
+};
+
+const getDocumentStorageKey = (): string => {
+  const famCode = getActiveFamilyCode();
+  if (famCode) {
+    return `paperless_docs_fam_${famCode}`;
+  }
+  const email = getCurrentUserEmail();
+  return `paperless_docs_usr_${email}`;
+};
+
+const getStoredDocuments = (): Document[] => {
+  // Purge any old unscoped global storage to prevent leakage across logins
+  try {
+    localStorage.removeItem('paperless_stored_documents');
+  } catch {}
+
+  const key = getDocumentStorageKey();
+  try {
+    const storedStr = localStorage.getItem(key);
+    if (storedStr) {
+      const list = JSON.parse(storedStr);
+      if (Array.isArray(list)) {
+        return list.filter(d => d.id !== 13 && !d.name.includes('Relieving[23MIC7028]'));
+      }
+    }
+  } catch {}
+  return [];
+};
+
+const saveStoredDocuments = (docs: Document[]) => {
+  const key = getDocumentStorageKey();
+  localStorage.setItem(key, JSON.stringify(docs));
+};
+
+// ==========================================
 // IndexedDB Local Vault Storage for Files
 // ==========================================
 const DB_NAME = 'paperless_vault_db';
@@ -106,66 +165,11 @@ const dataUrlToBlob = (dataUrl: string): Blob | null => {
 };
 
 // ==========================================
-// Synthetic PDF Generator for Fallbacks
-// ==========================================
-const createStandardPdfBlob = (
-  title: string,
-  owner: string,
-  category: string,
-  date: string,
-  desc?: string
-): Blob => {
-  const cleanTitle = (title || 'DOCUMENT').replace(/[()\\]/g, '');
-  const cleanOwner = (owner || 'Family Member').replace(/[()\\]/g, '');
-  const cleanCat = (category || 'Identity').replace(/[()\\]/g, '');
-  const cleanDate = (date || new Date().toISOString().split('T')[0]).replace(/[()\\]/g, '');
-  const cleanDesc = (desc || 'Securely verified document record stored in PaperlessFamily digital vault.').substring(0, 120).replace(/[()\\]/g, '');
-
-  const pdfString = `%PDF-1.4
-1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
-2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
-3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj
-4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj
-5 0 obj << /Length 400 >> stream
-BT
-/F1 22 Tf 50 780 Td (PAPERLESS FAMILY - OFFICIAL VAULT DOCUMENT) Tj
-/F1 14 Tf 0 -40 Td (Document: ${cleanTitle}) Tj
-/F1 12 Tf 0 -25 Td (Category: ${cleanCat}) Tj
-/F1 12 Tf 0 -25 Td (Owner: ${cleanOwner}) Tj
-/F1 12 Tf 0 -25 Td (Date: ${cleanDate}) Tj
-/F1 11 Tf 0 -35 Td (Status: SECURE & VERIFIED RECORD) Tj
-/F1 10 Tf 0 -30 Td (${cleanDesc}) Tj
-ET
-endstream endobj
-xref
-0 6
-0000000000 65535 f 
-0000000009 00000 n 
-0000000058 00000 n 
-0000000115 00000 n 
-0000000236 00000 n 
-0000000311 00000 n 
-trailer << /Size 6 /Root 1 0 R >>
-startxref
-760
-%%EOF`;
-
-  return new Blob([pdfString], { type: 'application/pdf' });
-};
-
-// ==========================================
-// Base Initial Documents for Static Deployment
+// Base Initial Documents for Demo Users Only
 // ==========================================
 const getBaseDocuments = (): Document[] => {
-  const userStr = localStorage.getItem('paperless_user');
-  let isDemo = false;
-
-  if (userStr) {
-    try {
-      const u = JSON.parse(userStr);
-      isDemo = (u.email || '').toLowerCase().includes('demo') || (u.email || '').toLowerCase().includes('sharma');
-    } catch {}
-  }
+  const email = getCurrentUserEmail();
+  const isDemo = email.includes('demo') || email.includes('sharma');
 
   if (isDemo) {
     return [
@@ -176,7 +180,7 @@ const getBaseDocuments = (): Document[] => {
     ];
   }
 
-  // Real user accounts start completely clean with zero mock documents
+  // Real user accounts start with an empty vault!
   return [];
 };
 
@@ -206,21 +210,13 @@ export const getDocuments = async (params?: DocumentQueryParams): Promise<ApiRes
     }
   } catch (e) {}
 
-  // 2. Fallback for static Vercel deployment: load user's real uploaded documents
-  let storedDocs: Document[] = [];
-  try {
-    const storedStr = localStorage.getItem('paperless_stored_documents');
-    if (storedStr) {
-      storedDocs = JSON.parse(storedStr);
-      // Clean out any legacy mock document (id 13 or Relieving placeholder)
-      storedDocs = storedDocs.filter(d => d.id !== 13 && !d.name.includes('Relieving[23MIC7028]'));
-      localStorage.setItem('paperless_stored_documents', JSON.stringify(storedDocs));
-    }
-  } catch (e) {}
+  // 2. Static Vercel deployment: load documents strictly scoped to this family / user
+  const email = getCurrentUserEmail();
+  const isDemo = email.includes('demo') || email.includes('sharma');
+  const baseDocs = isDemo ? getBaseDocuments() : [];
+  const storedDocs = getStoredDocuments();
 
-  const baseDocs = getBaseDocuments();
-
-  // Deduplicate and combine (user uploaded documents first)
+  // Combine user's documents
   const combined = [...storedDocs];
   const existingIds = new Set(storedDocs.map(d => d.id));
   for (const b of baseDocs) {
@@ -279,40 +275,22 @@ export const getDocument = async (id: number): Promise<ApiResponse<Document>> =>
     }
   } catch (e) {}
 
-  // 2. Check localStorage
-  try {
-    const storedStr = localStorage.getItem('paperless_stored_documents');
-    if (storedStr) {
-      const stored = JSON.parse(storedStr);
-      const found = stored.find((d: Document) => d.id === id);
-      if (found) {
-        return { success: true, message: 'Document found', data: found };
-      }
-    }
-  } catch (e) {}
+  // 2. Check current user's scoped documents
+  const storedDocs = getStoredDocuments();
+  const found = storedDocs.find(d => d.id === id);
+  if (found) {
+    return { success: true, message: 'Document found', data: found };
+  }
 
-  // 3. Fallback to all documents
+  // 3. Fallback to all documents for current user
   const docsRes = await getDocuments();
-  const found = (docsRes.data || []).find(d => d.id === id) || (docsRes.data && docsRes.data[0]);
+  const doc = (docsRes.data || []).find(d => d.id === id);
 
-  return {
-    success: true,
-    message: 'Document detail',
-    data: found || {
-      id,
-      name: 'Document Preview',
-      category: 'Identity',
-      ownerName: 'Family Member',
-      ownerId: 1,
-      familyId: 1,
-      fileName: 'document.pdf',
-      fileType: 'application/pdf',
-      fileSize: 123851,
-      status: 'ACTIVE',
-      uploadedAt: new Date().toISOString(),
-      uploadedBy: 'Family Member',
-    },
-  };
+  if (doc) {
+    return { success: true, message: 'Document found', data: doc };
+  }
+
+  throw new Error('Document not found in current vault');
 };
 
 export const uploadDocument = async (formData: FormData): Promise<ApiResponse<Document>> => {
@@ -328,7 +306,7 @@ export const uploadDocument = async (formData: FormData): Promise<ApiResponse<Do
     }
   } catch (e) {}
 
-  // 2. Offline / Vercel fallback: persist into IndexedDB, localStorage, and memory cache
+  // 2. Offline / Vercel fallback: persist into user-scoped storage
   const name = (formData.get('name') as string) || 'New Document';
   const category = (formData.get('category') as string) || 'Identity';
   const subcategory = (formData.get('subcategory') as string) || '';
@@ -403,18 +381,9 @@ export const uploadDocument = async (formData: FormData): Promise<ApiResponse<Do
     dataUrl: dataUrl || undefined,
   };
 
-  // Persist metadata into localStorage
-  try {
-    const storedStr = localStorage.getItem('paperless_stored_documents');
-    let stored: any[] = [];
-    if (storedStr) {
-      stored = JSON.parse(storedStr);
-    }
-    stored = [newDoc, ...stored];
-    localStorage.setItem('paperless_stored_documents', JSON.stringify(stored));
-  } catch (err) {
-    console.warn('Could not update paperless_stored_documents in localStorage:', err);
-  }
+  // Persist metadata into user's scoped storage
+  const existing = getStoredDocuments();
+  saveStoredDocuments([newDoc, ...existing]);
 
   return {
     success: true,
@@ -429,19 +398,14 @@ export const updateDocument = async (id: number, data: Partial<Document>): Promi
     if (response.data && response.data.data?.id) return response.data;
   } catch (e) {}
 
-  // Update in localStorage
-  try {
-    const storedStr = localStorage.getItem('paperless_stored_documents');
-    if (storedStr) {
-      const stored = JSON.parse(storedStr);
-      const idx = stored.findIndex((d: Document) => d.id === id);
-      if (idx !== -1) {
-        stored[idx] = { ...stored[idx], ...data };
-        localStorage.setItem('paperless_stored_documents', JSON.stringify(stored));
-        return { success: true, message: 'Document updated', data: stored[idx] };
-      }
-    }
-  } catch (e) {}
+  // Update in user's scoped storage
+  const existing = getStoredDocuments();
+  const idx = existing.findIndex(d => d.id === id);
+  if (idx !== -1) {
+    existing[idx] = { ...existing[idx], ...data };
+    saveStoredDocuments(existing);
+    return { success: true, message: 'Document updated', data: existing[idx] };
+  }
 
   return { success: true, message: 'Updated', data: data as Document };
 };
@@ -454,15 +418,10 @@ export const deleteDocument = async (id: number): Promise<ApiResponse<void>> => 
   // Delete from in-memory cache
   memoryBlobCache.delete(id);
 
-  // Delete from localStorage
-  try {
-    const storedStr = localStorage.getItem('paperless_stored_documents');
-    if (storedStr) {
-      const stored = JSON.parse(storedStr);
-      const filtered = stored.filter((d: Document) => d.id !== id);
-      localStorage.setItem('paperless_stored_documents', JSON.stringify(filtered));
-    }
-  } catch (e) {}
+  // Delete from user's scoped storage
+  const existing = getStoredDocuments();
+  const filtered = existing.filter(d => d.id !== id);
+  saveStoredDocuments(filtered);
 
   // Delete from IndexedDB
   await deleteFileFromDb(id);
@@ -502,7 +461,7 @@ export const getDashboardStats = async (): Promise<ApiResponse<DashboardStats>> 
     message: 'Dashboard stats',
     data: {
       totalDocuments: docs.length,
-      totalMembers: 2,
+      totalMembers: 1,
       expiringSoon: expiringCount,
       storageUsed: `${sizeMb} MB`,
     },
@@ -515,41 +474,27 @@ export const previewDocument = async (id: number): Promise<Blob> => {
     return memoryBlobCache.get(id)!;
   }
 
-  // 2. If it's the Relieving document (id 13 or filename matching relieving)
-  const docRes = await getDocument(id);
-  const doc = docRes.data;
-  if (id === 13 || doc?.fileName?.toLowerCase().includes('relieving')) {
-    try {
-      const res = await fetch('/documents/relieving.pdf');
-      if (res.ok) {
-        const realBlob = await res.blob();
-        if (realBlob.size > 1000) {
-          memoryBlobCache.set(id, realBlob);
-          return realBlob;
-        }
-      }
-    } catch (e) {}
-  }
-
-  // 3. Check IndexedDB for user-uploaded document binary
+  // 2. Check IndexedDB for user-uploaded document binary
   const idbBlob = await getFileFromDb(id);
   if (idbBlob && idbBlob.size > 0) {
     memoryBlobCache.set(id, idbBlob);
     return idbBlob;
   }
 
-  // 4. Check localStorage DataURL if present
-  if ((doc as any)?.dataUrl) {
-    try {
+  // 3. Check localStorage DataURL if present
+  try {
+    const docRes = await getDocument(id);
+    const doc = docRes.data;
+    if ((doc as any)?.dataUrl) {
       const b = dataUrlToBlob((doc as any).dataUrl);
       if (b && b.size > 0) {
         memoryBlobCache.set(id, b);
         return b;
       }
-    } catch (e) {}
-  }
+    }
+  } catch (e) {}
 
-  // 5. Try backend preview endpoint if available
+  // 4. Try backend preview endpoint if available
   try {
     const response = await api.get(`/documents/${id}/preview`, {
       responseType: 'blob',
@@ -560,18 +505,10 @@ export const previewDocument = async (id: number): Promise<Blob> => {
     }
   } catch (e) {}
 
-  // 6. Fallback generated PDF with verified details
-  return createStandardPdfBlob(
-    doc.name,
-    doc.ownerName,
-    doc.category,
-    doc.issueDate || doc.uploadedAt,
-    doc.description
-  );
+  throw new Error('Preview not found');
 };
 
 export const downloadDocument = async (id: number): Promise<Blob> => {
-  // Return the exact same file Blob
   return previewDocument(id);
 };
 
