@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paperlessfamily-backend
+  namespace: paperlessfamily
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: paperlessfamily-backend
+  template:
+    metadata:
+      labels:
+        app: paperlessfamily-backend
+    spec:
+      containers:
+      - name: backend
+        image: ${DOCKER_USERNAME}/paperlessfamily-backend:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: paperlessfamily-config
+              key: DATABASE_URL
+        - name: DATABASE_USERNAME
+          valueFrom:
+            configMapKeyRef:
+              name: paperlessfamily-config
+              key: DATABASE_USERNAME
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: paperlessfamily-secrets
+              key: DATABASE_PASSWORD
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: paperlessfamily-secrets
+              key: JWT_SECRET
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: paperlessfamily-secrets
+              key: GEMINI_API_KEY
+        - name: UPLOAD_DIR
+          valueFrom:
+            configMapKeyRef:
+              name: paperlessfamily-config
+              key: UPLOAD_DIR
+        resources:
+          requests:
+            memory: 512Mi
+            cpu: 500m
+          limits:
+            memory: 1Gi
+            cpu: 1000m
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        volumeMounts:
+        - name: uploads
+          mountPath: /app/uploads
+      volumes:
+      - name: uploads
+        emptyDir: {}

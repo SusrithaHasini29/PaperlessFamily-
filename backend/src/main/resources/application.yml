@@ -1,0 +1,35 @@
+spring:
+  application:
+    name: paperlessfamily
+  main:
+    allow-bean-definition-overriding: true
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/paperlessfamily}
+    username: ${DATABASE_USERNAME:postgres}
+    password: ${DATABASE_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+server:
+  port: 8080
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:paperlessfamily-default-jwt-secret-key-change-in-production-must-be-256-bits}
+    expiration: 86400000
+  storage:
+    upload-dir: ${UPLOAD_DIR:./uploads}
+  ai:
+    api-key: ${GEMINI_API_KEY:}
+    model: gemini-2.0-flash

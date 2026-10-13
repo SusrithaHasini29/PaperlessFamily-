@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    font-family: 'Inter', 'Manrope', sans-serif;
+    color: #111111;
+    background-color: #FAFAF5;
+  }
+
+  body {
+    background-color: #FAFAF5;
+    color: #111111;
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    color: #111111;
+    letter-spacing: -0.02em;
+    font-weight: 700;
+  }
+}
+
+/* Subtle grid paper pattern */
+.bg-grid-pattern {
+  background-size: 24px 24px;
+  background-image: 
+    linear-gradient(to right, rgba(17, 17, 17, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(17, 17, 17, 0.05) 1px, transparent 1px);
+}
+
+.bg-dots-pattern {
+  background-size: 20px 20px;
+  background-image: radial-gradient(circle, rgba(17, 17, 17, 0.08) 1px, transparent 1px);
+}
+
+/* Custom modern scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: #FAFAF5;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #D5D5CE;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #111111;
+}
+
+/* Neo-brutalist & structured card utilities */
+.neo-box {
+  background-color: #FFFFFF;
+  border: 1.5px solid #111111;
+  box-shadow: 2px 2px 0px #111111;
+  border-radius: 12px;
+}
+
+.neo-box-interactive {
+  background-color: #FFFFFF;
+  border: 1.5px solid #111111;
+  box-shadow: 2px 2px 0px #111111;
+  border-radius: 12px;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.neo-box-interactive:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0px #111111;
+}
+
+.neo-box-interactive:active {
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0px #111111;
+}
+
+/* Clean pill buttons */
+.neo-btn {
+  border: 1.5px solid #111111;
+  font-weight: 600;
+  border-radius: 10px;
+  box-shadow: 2px 2px 0px #111111;
+  transition: all 0.15s ease;
+}
+
+.neo-btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0px #111111;
+}
+
+.neo-btn:active {
+  transform: translate(1px, 1px);
+  box-shadow: 0px 0px 0px #111111;
+}

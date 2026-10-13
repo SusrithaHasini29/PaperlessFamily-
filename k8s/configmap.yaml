@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: paperlessfamily-config
+  namespace: paperlessfamily
+data:
+  DATABASE_URL: "jdbc:postgresql://paperlessfamily-postgres:5432/paperlessfamily"
+  DATABASE_USERNAME: "postgres"
+  SPRING_PROFILES_ACTIVE: "production"
+  UPLOAD_DIR: "/app/uploads"
