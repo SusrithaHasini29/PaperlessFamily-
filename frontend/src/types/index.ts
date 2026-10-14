@@ -33,6 +33,8 @@ export interface Document {
   ownerName: string;
   ownerId: number;
   familyId: number;
+  familyCode?: string;
+  userEmail?: string;
   fileName: string;
   fileType: string;
   fileSize: number;

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { User, Family } from '../types';
 import * as authService from '../services/authService';
 import * as familyService from '../services/familyService';
+import * as documentService from '../services/documentService';
 
 interface AuthContextType {
   user: User | null;
@@ -137,8 +138,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = () => {
     authService.logout();
+    documentService.clearVaultSession();
     setUser(null);
     setFamily(null);
+    documentService.notifyVaultUpdated();
   };
 
   return (

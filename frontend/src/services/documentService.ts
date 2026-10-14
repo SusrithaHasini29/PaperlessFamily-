@@ -13,10 +13,19 @@ export interface DocumentQueryParams {
 const memoryBlobCache = new Map<number, Blob>();
 let inMemoryDocsCache: Document[] = [];
 
+/**
+ * Completely clears in-memory session cache so another user logging in
+ * on the same browser/device never inherits documents from a previous session.
+ */
+export const clearVaultSession = (): void => {
+  inMemoryDocsCache = [];
+  memoryBlobCache.clear();
+};
+
 // ==========================================
 // User & Family Scoping Helpers
 // ==========================================
-const getCurrentUserEmail = (): string => {
+export const getCurrentUserEmail = (): string => {
   try {
     const userStr = localStorage.getItem('paperless_user');
     if (userStr) {
@@ -27,7 +36,7 @@ const getCurrentUserEmail = (): string => {
   return 'default';
 };
 
-const getActiveFamilyCode = (): string => {
+export const getActiveFamilyCode = (): string => {
   const email = getCurrentUserEmail();
   try {
     const famStr =
@@ -49,6 +58,69 @@ export const notifyVaultUpdated = () => {
 };
 
 /**
+ * Strict Document Access & Security Isolation
+ * A document is ONLY accessible if:
+ * 1. Both the document and current user belong to the SAME non-empty family space (`familyCode`), OR
+ * 2. The document was uploaded by or belongs to the current user's email/username, OR
+ * 3. It's a demo record and the user is logged into a demo account.
+ *
+ * If a document was uploaded by "jvrishitha" and the active user is "chsusrithahasini29"
+ * without a shared family code, it is STRICTLY ISOLATED AND HIDDEN.
+ */
+export const isDocumentAccessibleToCurrentUser = (doc: Document): boolean => {
+  if (!doc || !doc.id) return false;
+
+  const currentEmail = getCurrentUserEmail().trim().toLowerCase();
+  const currentFamCode = getActiveFamilyCode().trim().toUpperCase();
+
+  // 1. Demo documents check (IDs 1, 2, 4, 7)
+  const isDemoUser = currentEmail.includes('demo') || currentEmail.includes('sharma');
+  if ([1, 2, 4, 7].includes(doc.id)) {
+    return isDemoUser;
+  }
+
+  // 2. Shared Family Space Check
+  const docFamCode = (doc.familyCode || '').trim().toUpperCase();
+  if (currentFamCode && docFamCode && currentFamCode === docFamCode) {
+    return true;
+  }
+
+  // 3. User Email Check
+  const docEmail = (doc.userEmail || '').trim().toLowerCase();
+  if (docEmail && currentEmail && currentEmail !== 'default') {
+    if (docEmail === currentEmail) return true;
+    // Explicit email mismatch without shared family code -> strictly hide
+    return false;
+  }
+
+  // 4. Fallback matching on username / display name for legacy records
+  const currentPrefix = currentEmail.split('@')[0].trim().toLowerCase();
+  let currentDisplayName = '';
+  try {
+    const u = localStorage.getItem('paperless_user');
+    if (u) {
+      const parsed = JSON.parse(u);
+      currentDisplayName = (parsed.name || '').trim().toLowerCase();
+    }
+  } catch {}
+
+  const docOwner = (doc.ownerName || '').trim().toLowerCase();
+  const docUploader = (doc.uploadedBy || '').trim().toLowerCase();
+
+  const matchesThisUser =
+    (docOwner && (docOwner === currentEmail || docOwner === currentPrefix || (currentDisplayName && docOwner === currentDisplayName))) ||
+    (docUploader && (docUploader === currentEmail || docUploader === currentPrefix || (currentDisplayName && docUploader === currentDisplayName)));
+
+  if (matchesThisUser) {
+    return true;
+  }
+
+  // If the document has an owner name that explicitly belongs to another user
+  // (e.g. docOwner is 'jvrishitha' while current user is 'chsusrithahasini29'), reject!
+  return false;
+};
+
+/**
  * Strips any base64 dataUrl or binary blobs from the metadata object
  * so localStorage NEVER exceeds browser quota (5MB limit).
  */
@@ -60,6 +132,8 @@ const cleanDocMetadata = (doc: any): Document => {
     id: Number(clean.id) || Date.now(),
     fileSize: Number(clean.fileSize) || 245000,
     status: clean.status || 'ACTIVE',
+    userEmail: clean.userEmail ? String(clean.userEmail).trim().toLowerCase() : undefined,
+    familyCode: clean.familyCode ? String(clean.familyCode).trim().toUpperCase() : undefined,
   } as Document;
 };
 
@@ -79,7 +153,6 @@ const purgeHeavyLocalStorageKeys = () => {
       try {
         const val = localStorage.getItem(key);
         if (val && val.length > 500000) {
-          // If a key has more than 500KB of raw text (likely unstripped base64), purge or clean it
           if (key.startsWith('paperless_docs_')) {
             const parsed = JSON.parse(val);
             if (Array.isArray(parsed)) {
@@ -96,7 +169,6 @@ const purgeHeavyLocalStorageKeys = () => {
   } catch {}
 };
 
-// Initialize quota hygiene once on load
 purgeHeavyLocalStorageKeys();
 
 // ==========================================
@@ -213,7 +285,9 @@ const getDocsMetaFromDb = async (): Promise<Document[]> => {
       const req = store.getAll();
       req.onsuccess = () => {
         const items = req.result || [];
-        resolve(items.map(cleanDocMetadata).filter(Boolean));
+        const cleaned = items.map(cleanDocMetadata).filter(Boolean);
+        // Strictly return only documents belonging to the current user/family session!
+        resolve(cleaned.filter(isDocumentAccessibleToCurrentUser));
       };
       req.onerror = () => resolve([]);
     });
@@ -250,7 +324,7 @@ export const getStoredDocuments = (): Document[] => {
           for (const item of list) {
             if (item && item.id) {
               const cleaned = cleanDocMetadata(item);
-              if (cleaned && !seenIds.has(cleaned.id)) {
+              if (cleaned && !seenIds.has(cleaned.id) && isDocumentAccessibleToCurrentUser(cleaned)) {
                 seenIds.add(cleaned.id);
                 collectedDocs.push(cleaned);
               }
@@ -269,7 +343,7 @@ export const getStoredDocuments = (): Document[] => {
   // 2. Also load from user-specific key
   loadFromKey(`paperless_docs_usr_${email}`);
 
-  return collectedDocs;
+  return collectedDocs.filter(isDocumentAccessibleToCurrentUser);
 };
 
 export const saveStoredDocuments = (docs: Document[]) => {
@@ -327,7 +401,10 @@ export const migrateDocsToFamilyKey = (): void => {
 
     const newDocs = userDocs.filter((d) => !existingIds.has(d.id));
     if (newDocs.length > 0) {
-      const merged = [...newDocs.map(cleanDocMetadata), ...famDocs.map(cleanDocMetadata)];
+      const merged = [
+        ...newDocs.map((d) => cleanDocMetadata({ ...d, familyCode: famCode })),
+        ...famDocs.map(cleanDocMetadata),
+      ];
       localStorage.setItem(famKey, JSON.stringify(merged));
     }
   } catch {}
@@ -350,6 +427,8 @@ const getBaseDocuments = (): Document[] => {
         ownerName: 'Raj Sharma',
         ownerId: 1,
         familyId: 1,
+        familyCode: 'FAM-SHARM',
+        userEmail: 'demo@paperlessfamily.com',
         fileName: 'Driving_Licence.pdf',
         fileType: 'application/pdf',
         fileSize: 245000,
@@ -367,6 +446,8 @@ const getBaseDocuments = (): Document[] => {
         ownerName: 'Raj Sharma',
         ownerId: 1,
         familyId: 1,
+        familyCode: 'FAM-SHARM',
+        userEmail: 'demo@paperlessfamily.com',
         fileName: 'Vehicle_Insurance.pdf',
         fileType: 'application/pdf',
         fileSize: 180000,
@@ -384,6 +465,8 @@ const getBaseDocuments = (): Document[] => {
         ownerName: 'Priya Sharma',
         ownerId: 2,
         familyId: 1,
+        familyCode: 'FAM-SHARM',
+        userEmail: 'demo@paperlessfamily.com',
         fileName: 'Passport.pdf',
         fileType: 'application/pdf',
         fileSize: 520000,
@@ -401,6 +484,8 @@ const getBaseDocuments = (): Document[] => {
         ownerName: 'Aarav Sharma',
         ownerId: 3,
         familyId: 1,
+        familyCode: 'FAM-SHARM',
+        userEmail: 'demo@paperlessfamily.com',
         fileName: 'College_ID.pdf',
         fileType: 'application/pdf',
         fileSize: 120000,
@@ -413,7 +498,6 @@ const getBaseDocuments = (): Document[] => {
     ];
   }
 
-  // Real user accounts start with an empty vault
   return [];
 };
 
@@ -435,30 +519,38 @@ export const getDocuments = async (params?: DocumentQueryParams): Promise<ApiRes
     idbDocs = await getDocsMetaFromDb();
   } catch {}
 
-  // 2. Merge all sources safely by unique document ID
+  // 2. Merge all sources safely by unique document ID, strictly respecting user/family accessibility
   const allMap = new Map<number, Document>();
 
   // Add base demo docs first (if demo)
   for (const doc of baseDocs) {
-    if (doc?.id) allMap.set(doc.id, doc);
+    if (doc?.id && isDocumentAccessibleToCurrentUser(doc)) {
+      allMap.set(doc.id, doc);
+    }
   }
 
-  // Add IndexedDB docs (higher priority)
+  // Add IndexedDB docs (strictly filtered to active user/family)
   for (const doc of idbDocs) {
-    if (doc?.id) allMap.set(doc.id, doc);
+    if (doc?.id && isDocumentAccessibleToCurrentUser(doc)) {
+      allMap.set(doc.id, doc);
+    }
   }
 
   // Add localStorage docs
   for (const doc of localStorageDocs) {
-    if (doc?.id) allMap.set(doc.id, doc);
+    if (doc?.id && isDocumentAccessibleToCurrentUser(doc)) {
+      allMap.set(doc.id, doc);
+    }
   }
 
-  // Add in-memory session docs (highest priority)
+  // Add in-memory session docs (strictly filtered to active user/family)
   for (const doc of inMemoryDocsCache) {
-    if (doc?.id) allMap.set(doc.id, doc);
+    if (doc?.id && isDocumentAccessibleToCurrentUser(doc)) {
+      allMap.set(doc.id, doc);
+    }
   }
 
-  const combined = Array.from(allMap.values());
+  const combined = Array.from(allMap.values()).filter(isDocumentAccessibleToCurrentUser);
 
   // Apply category filter
   let filtered = [...combined];
@@ -507,7 +599,7 @@ export const getDocument = async (id: number | string): Promise<ApiResponse<Docu
   const numId = Number(id);
 
   // 1. Check in-memory docs cache
-  const memDoc = inMemoryDocsCache.find((d) => d.id === numId);
+  const memDoc = inMemoryDocsCache.find((d) => d.id === numId && isDocumentAccessibleToCurrentUser(d));
   if (memDoc) {
     return { success: true, message: 'Document found', data: memDoc };
   }
@@ -515,7 +607,7 @@ export const getDocument = async (id: number | string): Promise<ApiResponse<Docu
   // 2. Check IndexedDB metadata
   try {
     const idbDocs = await getDocsMetaFromDb();
-    const idbDoc = idbDocs.find((d) => d.id === numId);
+    const idbDoc = idbDocs.find((d) => d.id === numId && isDocumentAccessibleToCurrentUser(d));
     if (idbDoc) {
       return { success: true, message: 'Document found', data: idbDoc };
     }
@@ -523,14 +615,14 @@ export const getDocument = async (id: number | string): Promise<ApiResponse<Docu
 
   // 3. Check stored documents (localStorage)
   const storedDocs = getStoredDocuments();
-  const found = storedDocs.find((d) => d.id === numId);
+  const found = storedDocs.find((d) => d.id === numId && isDocumentAccessibleToCurrentUser(d));
   if (found) {
     return { success: true, message: 'Document found', data: found };
   }
 
-  // 4. Fallback to full list (including base demo docs)
+  // 4. Fallback to full list
   const docsRes = await getDocuments();
-  const doc = (docsRes.data || []).find((d) => d.id === numId);
+  const doc = (docsRes.data || []).find((d) => d.id === numId && isDocumentAccessibleToCurrentUser(d));
   if (doc) {
     return { success: true, message: 'Document found', data: doc };
   }
@@ -539,11 +631,14 @@ export const getDocument = async (id: number | string): Promise<ApiResponse<Docu
 };
 
 export const uploadDocument = async (formData: FormData): Promise<ApiResponse<Document>> => {
+  const email = getCurrentUserEmail();
+  const famCode = getActiveFamilyCode();
+
   const name = (formData.get('name') as string) || 'New Document';
   const category = (formData.get('category') as string) || 'Identity';
   const subcategory = (formData.get('subcategory') as string) || '';
   const ownerName =
-    (formData.get('ownerName') as string) || getCurrentUserEmail().split('@')[0] || 'Self';
+    (formData.get('ownerName') as string) || email.split('@')[0] || 'Self';
   const ownerId = Number(formData.get('ownerId')) || 1;
   const issueDate = (formData.get('issueDate') as string) || '';
   const expiryDate = (formData.get('expiryDate') as string) || '';
@@ -602,7 +697,7 @@ export const uploadDocument = async (formData: FormData): Promise<ApiResponse<Do
     }
   } catch {}
 
-  // Build clean document metadata
+  // Build clean document metadata with STRICT userEmail and familyCode ownership tags
   const newDoc: Document = {
     id: docId,
     name,
@@ -611,6 +706,8 @@ export const uploadDocument = async (formData: FormData): Promise<ApiResponse<Do
     ownerName,
     ownerId,
     familyId,
+    familyCode: famCode || undefined,
+    userEmail: email,
     fileName,
     fileType,
     fileSize,
@@ -892,4 +989,6 @@ export default {
   getCategories,
   migrateDocsToFamilyKey,
   notifyVaultUpdated,
+  clearVaultSession,
+  isDocumentAccessibleToCurrentUser,
 };

@@ -1,5 +1,6 @@
 import api from './api';
 import { User, ApiResponse } from '../types';
+import { clearVaultSession, notifyVaultUpdated } from './documentService';
 
 export interface AuthResponse {
   token: string;
@@ -17,6 +18,7 @@ const emailToId = (email: string): number => {
 
 export const login = async (email: string, password: string): Promise<ApiResponse<AuthResponse>> => {
   const cleanEmail = email.trim().toLowerCase();
+  clearVaultSession();
 
   // Try backend API first
   try {
@@ -80,6 +82,7 @@ const buildDefaultUser = (cleanEmail: string): User => {
 export const register = async (name: string, email: string, password: string): Promise<ApiResponse<AuthResponse>> => {
   const cleanEmail = email.trim().toLowerCase();
   const cleanName = name.trim() || 'User';
+  clearVaultSession();
 
   try {
     const response = await api.post<ApiResponse<AuthResponse>>('/auth/register', { name: cleanName, email: cleanEmail, password });
@@ -121,6 +124,8 @@ export const logout = (): void => {
   localStorage.removeItem('token');
   localStorage.removeItem('paperless_user');
   localStorage.removeItem('paperless_family');
+  clearVaultSession();
+  notifyVaultUpdated();
 };
 
 export const getCurrentUser = async (): Promise<ApiResponse<User>> => {
