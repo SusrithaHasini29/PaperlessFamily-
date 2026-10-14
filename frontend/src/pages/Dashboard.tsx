@@ -56,19 +56,16 @@ export const Dashboard: React.FC = () => {
 
           if (statsRes.status === 'fulfilled' && statsRes.value?.data) {
             setStats(statsRes.value.data);
-          } else if (isDemo) {
-            setStats({
-              totalDocuments: 128,
-              totalMembers: 6,
-              expiringSoon: 4,
-              storageUsed: '2.4 GB',
-            });
           } else {
+            const actualDocs = docsRes.status === 'fulfilled' && docsRes.value?.data ? docsRes.value.data : [];
+            const expiringCount = actualDocs.filter((d) => d.status === 'EXPIRING_SOON' || d.status === 'EXPIRED').length;
+            const bytes = actualDocs.reduce((acc, d) => acc + (d.fileSize || 0), 0);
+            const mb = (bytes / (1024 * 1024)).toFixed(1);
             setStats({
-              totalDocuments: 0,
-              totalMembers: 1,
-              expiringSoon: 0,
-              storageUsed: '0 MB',
+              totalDocuments: actualDocs.length,
+              totalMembers: members.length || 1,
+              expiringSoon: expiringCount,
+              storageUsed: `${mb} MB`,
             });
           }
 
@@ -322,7 +319,7 @@ export const Dashboard: React.FC = () => {
             </div>
             <div>
               <div className="text-2xl sm:text-3xl font-black text-black leading-none">
-                {stats?.totalDocuments ?? (user?.email === 'demo@paperlessfamily.com' ? 128 : 0)}
+                {stats?.totalDocuments ?? recentDocs.length}
               </div>
               <div className="text-[11px] font-bold text-gray-600 uppercase tracking-wider mt-1">
                 Total Documents
@@ -339,7 +336,7 @@ export const Dashboard: React.FC = () => {
             </div>
             <div>
               <div className="text-2xl sm:text-3xl font-black text-black leading-none">
-                {stats?.totalMembers ?? (user?.email === 'demo@paperlessfamily.com' ? 6 : members.length || 1)}
+                {stats?.totalMembers ?? (members.length || 1)}
               </div>
               <div className="text-[11px] font-black text-black uppercase tracking-wider mt-1">
                 Family Members
@@ -356,7 +353,7 @@ export const Dashboard: React.FC = () => {
             </div>
             <div>
               <div className="text-2xl sm:text-3xl font-black text-black leading-none">
-                {stats?.expiringSoon ?? (user?.email === 'demo@paperlessfamily.com' ? 4 : expiringDocs.length || 0)}
+                {stats?.expiringSoon ?? expiringDocs.length}
               </div>
               <div className="text-[11px] font-black text-black uppercase tracking-wider mt-1">
                 Expiring Soon
@@ -373,7 +370,7 @@ export const Dashboard: React.FC = () => {
             </div>
             <div>
               <div className="text-2xl sm:text-3xl font-black text-black leading-none">
-                {stats?.storageUsed ?? (user?.email === 'demo@paperlessfamily.com' ? '2.4 GB' : '0 MB')}
+                {stats?.storageUsed ?? '0 MB'}
               </div>
               <div className="text-[11px] font-black text-black uppercase tracking-wider mt-1">
                 Storage Used

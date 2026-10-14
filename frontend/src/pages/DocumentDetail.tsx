@@ -361,12 +361,30 @@ export const DocumentDetail: React.FC = () => {
                     />
                   </div>
                 ) : (
-                  <div className="w-full h-[580px] rounded-xl border-1.5 border-black overflow-hidden shadow-neo-sm bg-white">
-                    <iframe
-                      src={`${previewBlobUrl}#toolbar=1`}
-                      title={document.name}
-                      className="w-full h-full border-none"
-                    />
+                  <div className="w-full h-[600px] rounded-xl border-1.5 border-black overflow-hidden shadow-neo-sm bg-white relative">
+                    <object
+                      data={`${previewBlobUrl}#toolbar=1`}
+                      type={document.fileType || 'application/pdf'}
+                      className="w-full h-full"
+                    >
+                      <iframe
+                        src={`${previewBlobUrl}#toolbar=1`}
+                        title={document.name}
+                        className="w-full h-full border-none"
+                      >
+                        <div className="p-8 text-center">
+                          <p className="text-xs font-bold text-gray-600 mb-3">
+                            Inline preview not supported by your browser.
+                          </p>
+                          <button
+                            onClick={handleDownload}
+                            className="neo-btn px-4 py-2 bg-lime text-black text-xs font-black uppercase tracking-wider"
+                          >
+                            Download Document
+                          </button>
+                        </div>
+                      </iframe>
+                    </object>
                   </div>
                 )
               ) : (
@@ -380,9 +398,10 @@ export const DocumentDetail: React.FC = () => {
                   </p>
                   <button
                     onClick={handleDownload}
-                    className="neo-btn px-4 py-2 bg-lime text-black text-xs font-black uppercase tracking-wider"
+                    className="neo-btn inline-flex items-center gap-2 px-5 py-2.5 bg-lime text-black text-xs font-black uppercase tracking-wider"
                   >
-                    Download to View Locally
+                    <Download className="w-4 h-4 stroke-[2.5]" />
+                    <span>Download Document</span>
                   </button>
                 </div>
               )}

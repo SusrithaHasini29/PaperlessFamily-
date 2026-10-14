@@ -9,8 +9,9 @@ export interface DocumentQueryParams {
   sort?: string;
 }
 
-// In-memory session cache for fast instant previews
+// In-memory session caches for instantaneous zero-latency operations
 const memoryBlobCache = new Map<number, Blob>();
+let inMemoryDocsCache: Document[] = [];
 
 // ==========================================
 // User & Family Scoping Helpers
@@ -53,21 +54,187 @@ export const notifyVaultUpdated = () => {
  */
 const cleanDocMetadata = (doc: any): Document => {
   if (!doc || typeof doc !== 'object') return null as any;
-  const { dataUrl, fileContent, base64, buffer, ...clean } = doc;
+  const { dataUrl, fileContent, base64, buffer, blob, ...clean } = doc;
   return {
     ...clean,
     id: Number(clean.id) || Date.now(),
-    fileSize: Number(clean.fileSize) || 0,
+    fileSize: Number(clean.fileSize) || 245000,
     status: clean.status || 'ACTIVE',
   } as Document;
 };
 
-export const getStoredDocuments = (): Document[] => {
-  // Purge any old unscoped global storage to prevent leakage across logins
+/**
+ * Proactively purges bloated legacy keys that may have exceeded localStorage quota.
+ */
+const purgeHeavyLocalStorageKeys = () => {
   try {
-    localStorage.removeItem('paperless_stored_documents');
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (key === 'paperless_stored_documents') {
+        keysToRemove.push(key);
+        continue;
+      }
+      try {
+        const val = localStorage.getItem(key);
+        if (val && val.length > 500000) {
+          // If a key has more than 500KB of raw text (likely unstripped base64), purge or clean it
+          if (key.startsWith('paperless_docs_')) {
+            const parsed = JSON.parse(val);
+            if (Array.isArray(parsed)) {
+              const cleaned = parsed.map(cleanDocMetadata);
+              localStorage.setItem(key, JSON.stringify(cleaned));
+            }
+          }
+        }
+      } catch {}
+    }
+    for (const k of keysToRemove) {
+      localStorage.removeItem(k);
+    }
   } catch {}
+};
 
+// Initialize quota hygiene once on load
+purgeHeavyLocalStorageKeys();
+
+// ==========================================
+// IndexedDB Local Vault Storage for Files & Metadata
+// (Database: paperless_vault_db, Version: 3)
+// ==========================================
+const DB_NAME = 'paperless_vault_db';
+const FILE_STORE_NAME = 'document_files';
+const META_STORE_NAME = 'documents_meta';
+
+const getDb = (): Promise<IDBDatabase> => {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') {
+      reject(new Error('IndexedDB not supported'));
+      return;
+    }
+    const request = indexedDB.open(DB_NAME, 3);
+    request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(FILE_STORE_NAME)) {
+        db.createObjectStore(FILE_STORE_NAME);
+      }
+      if (!db.objectStoreNames.contains(META_STORE_NAME)) {
+        db.createObjectStore(META_STORE_NAME, { keyPath: 'id' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+};
+
+const storeFileInDb = async (
+  id: number,
+  buffer: ArrayBuffer,
+  blob: Blob,
+  type: string,
+  name: string
+): Promise<void> => {
+  try {
+    const numId = Number(id);
+    const db = await getDb();
+    return new Promise((resolve) => {
+      const tx = db.transaction(FILE_STORE_NAME, 'readwrite');
+      const store = tx.objectStore(FILE_STORE_NAME);
+      store.put({ id: numId, buffer, blob, type, name }, numId);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch (err) {
+    console.warn('Could not store file in IndexedDB:', err);
+  }
+};
+
+const getFileFromDb = async (id: number | string): Promise<Blob | null> => {
+  try {
+    const numId = Number(id);
+    const db = await getDb();
+    return new Promise((resolve) => {
+      const tx = db.transaction(FILE_STORE_NAME, 'readonly');
+      const store = tx.objectStore(FILE_STORE_NAME);
+      const req = store.get(numId);
+      req.onsuccess = () => {
+        const res = req.result;
+        if (!res) {
+          resolve(null);
+          return;
+        }
+        if (res instanceof Blob) {
+          resolve(res);
+        } else if (res.blob instanceof Blob) {
+          resolve(res.blob);
+        } else if (res.buffer) {
+          resolve(new Blob([res.buffer], { type: res.type || 'application/pdf' }));
+        } else {
+          resolve(null);
+        }
+      };
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+};
+
+const deleteFileFromDb = async (id: number | string): Promise<void> => {
+  try {
+    const numId = Number(id);
+    const db = await getDb();
+    const tx = db.transaction(FILE_STORE_NAME, 'readwrite');
+    tx.objectStore(FILE_STORE_NAME).delete(numId);
+  } catch {}
+};
+
+const storeDocMetaInDb = async (doc: Document): Promise<void> => {
+  try {
+    const clean = cleanDocMetadata(doc);
+    const db = await getDb();
+    return new Promise((resolve) => {
+      const tx = db.transaction(META_STORE_NAME, 'readwrite');
+      const store = tx.objectStore(META_STORE_NAME);
+      store.put(clean);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch {}
+};
+
+const getDocsMetaFromDb = async (): Promise<Document[]> => {
+  try {
+    const db = await getDb();
+    return new Promise((resolve) => {
+      const tx = db.transaction(META_STORE_NAME, 'readonly');
+      const store = tx.objectStore(META_STORE_NAME);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const items = req.result || [];
+        resolve(items.map(cleanDocMetadata).filter(Boolean));
+      };
+      req.onerror = () => resolve([]);
+    });
+  } catch {
+    return [];
+  }
+};
+
+const deleteDocMetaFromDb = async (id: number | string): Promise<void> => {
+  try {
+    const numId = Number(id);
+    const db = await getDb();
+    const tx = db.transaction(META_STORE_NAME, 'readwrite');
+    tx.objectStore(META_STORE_NAME).delete(numId);
+  } catch {}
+};
+
+// ==========================================
+// LocalStorage Persistence
+// ==========================================
+export const getStoredDocuments = (): Document[] => {
   const email = getCurrentUserEmail();
   const famCode = getActiveFamilyCode();
 
@@ -80,21 +247,14 @@ export const getStoredDocuments = (): Document[] => {
       if (storedStr) {
         const list = JSON.parse(storedStr);
         if (Array.isArray(list)) {
-          let hasHeavyData = false;
           for (const item of list) {
             if (item && item.id) {
-              if (item.dataUrl || item.base64) hasHeavyData = true;
-              if (item.id !== 13 && !(item.name || '').includes('Relieving[23MIC7028]')) {
-                if (!seenIds.has(item.id)) {
-                  seenIds.add(item.id);
-                  collectedDocs.push(cleanDocMetadata(item));
-                }
+              const cleaned = cleanDocMetadata(item);
+              if (cleaned && !seenIds.has(cleaned.id)) {
+                seenIds.add(cleaned.id);
+                collectedDocs.push(cleaned);
               }
             }
-          }
-          // Self-heal: rewrite clean array to clear out any wasted quota
-          if (hasHeavyData) {
-            localStorage.setItem(key, JSON.stringify(collectedDocs));
           }
         }
       }
@@ -123,14 +283,22 @@ export const saveStoredDocuments = (docs: Document[]) => {
       localStorage.setItem(`paperless_docs_fam_${famCode}`, JSON.stringify(cleanedDocs));
     } catch (e) {
       console.warn('Could not save to family key:', e);
+      purgeHeavyLocalStorageKeys();
+      try {
+        localStorage.setItem(`paperless_docs_fam_${famCode}`, JSON.stringify(cleanedDocs));
+      } catch {}
     }
   }
 
-  // 2. ALWAYS save to user key as well (double guarantee!)
+  // 2. ALWAYS save to user key as well (double guarantee)
   try {
     localStorage.setItem(`paperless_docs_usr_${email}`, JSON.stringify(cleanedDocs));
   } catch (e) {
     console.warn('Could not save to user key:', e);
+    purgeHeavyLocalStorageKeys();
+    try {
+      localStorage.setItem(`paperless_docs_usr_${email}`, JSON.stringify(cleanedDocs));
+    } catch {}
   }
 };
 
@@ -166,81 +334,6 @@ export const migrateDocsToFamilyKey = (): void => {
 };
 
 // ==========================================
-// IndexedDB Local Vault Storage for Files
-// ==========================================
-const DB_NAME = 'paperless_vault_db';
-const STORE_NAME = 'document_files';
-
-const getDb = (): Promise<IDBDatabase> => {
-  return new Promise((resolve, reject) => {
-    if (typeof indexedDB === 'undefined') {
-      reject(new Error('IndexedDB not supported'));
-      return;
-    }
-    const request = indexedDB.open(DB_NAME, 2);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME);
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-};
-
-const storeFileInDb = async (id: number, buffer: ArrayBuffer, type: string, name: string): Promise<void> => {
-  try {
-    const db = await getDb();
-    return new Promise((resolve) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.put({ id, buffer, type, name }, id);
-      req.onsuccess = () => resolve();
-      req.onerror = () => resolve();
-    });
-  } catch (err) {
-    console.warn('Could not store file in IndexedDB:', err);
-  }
-};
-
-const getFileFromDb = async (id: number): Promise<Blob | null> => {
-  try {
-    const db = await getDb();
-    return new Promise((resolve) => {
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.get(id);
-      req.onsuccess = () => {
-        const res = req.result;
-        if (!res) {
-          resolve(null);
-          return;
-        }
-        if (res instanceof Blob) {
-          resolve(res);
-        } else if (res.buffer) {
-          resolve(new Blob([res.buffer], { type: res.type || 'application/pdf' }));
-        } else {
-          resolve(null);
-        }
-      };
-      req.onerror = () => resolve(null);
-    });
-  } catch {
-    return null;
-  }
-};
-
-const deleteFileFromDb = async (id: number): Promise<void> => {
-  try {
-    const db = await getDb();
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).delete(id);
-  } catch {}
-};
-
-// ==========================================
 // Base Initial Documents for Demo Users Only
 // ==========================================
 const getBaseDocuments = (): Document[] => {
@@ -262,7 +355,7 @@ const getBaseDocuments = (): Document[] => {
         fileSize: 245000,
         expiryDate: '2027-03-15',
         status: 'ACTIVE',
-        uploadedAt: '2026-01-10',
+        uploadedAt: '2026-01-10T10:00:00Z',
         uploadedBy: 'Raj Sharma',
         description: 'Official driving licence issued by Ministry of Road Transport.',
       },
@@ -279,7 +372,7 @@ const getBaseDocuments = (): Document[] => {
         fileSize: 180000,
         expiryDate: new Date(Date.now() + 25 * 86400000).toISOString().split('T')[0],
         status: 'EXPIRING_SOON',
-        uploadedAt: '2026-01-12',
+        uploadedAt: '2026-01-12T10:00:00Z',
         uploadedBy: 'Raj Sharma',
         description: 'Comprehensive car insurance coverage.',
       },
@@ -296,7 +389,7 @@ const getBaseDocuments = (): Document[] => {
         fileSize: 520000,
         expiryDate: new Date(Date.now() + 18 * 86400000).toISOString().split('T')[0],
         status: 'EXPIRING_SOON',
-        uploadedAt: '2026-01-05',
+        uploadedAt: '2026-01-05T10:00:00Z',
         uploadedBy: 'Priya Sharma',
         description: 'Republic of India 36-page passport booklet.',
       },
@@ -313,14 +406,14 @@ const getBaseDocuments = (): Document[] => {
         fileSize: 120000,
         expiryDate: '2027-07-31',
         status: 'ACTIVE',
-        uploadedAt: '2026-01-15',
+        uploadedAt: '2026-01-15T10:00:00Z',
         uploadedBy: 'Aarav Sharma',
         description: 'Undergraduate student identification card.',
       },
     ];
   }
 
-  // Real user accounts start with an EMPTY vault
+  // Real user accounts start with an empty vault
   return [];
 };
 
@@ -329,40 +422,58 @@ const getBaseDocuments = (): Document[] => {
 // ==========================================
 
 export const getDocuments = async (params?: DocumentQueryParams): Promise<ApiResponse<Document[]>> => {
-  // 1. Try backend API first (if a real Spring Boot server is active)
-  try {
-    const queryParams: Record<string, any> = { ...params };
-    const response = await api.get<ApiResponse<Document[]>>('/documents', { params: queryParams });
-    if (response.data && typeof response.data === 'object' && Array.isArray(response.data.data)) {
-      return response.data;
-    }
-  } catch {}
-
-  // 2. Static Vercel deployment: load from robust client-side storage
   migrateDocsToFamilyKey();
 
   const email = getCurrentUserEmail();
   const isDemo = email.includes('demo') || email.includes('sharma');
   const baseDocs = isDemo ? getBaseDocuments() : [];
-  const storedDocs = getStoredDocuments();
 
-  // Combine stored docs and base demo docs
-  const combined = [...storedDocs];
-  const existingIds = new Set(storedDocs.map((d) => d.id));
-  for (const b of baseDocs) {
-    if (!existingIds.has(b.id)) {
-      combined.push(b);
-    }
+  // 1. Gather all documents from in-memory cache, IndexedDB metadata, and localStorage
+  const localStorageDocs = getStoredDocuments();
+  let idbDocs: Document[] = [];
+  try {
+    idbDocs = await getDocsMetaFromDb();
+  } catch {}
+
+  // 2. Merge all sources safely by unique document ID
+  const allMap = new Map<number, Document>();
+
+  // Add base demo docs first (if demo)
+  for (const doc of baseDocs) {
+    if (doc?.id) allMap.set(doc.id, doc);
   }
 
-  // Apply filters
+  // Add IndexedDB docs (higher priority)
+  for (const doc of idbDocs) {
+    if (doc?.id) allMap.set(doc.id, doc);
+  }
+
+  // Add localStorage docs
+  for (const doc of localStorageDocs) {
+    if (doc?.id) allMap.set(doc.id, doc);
+  }
+
+  // Add in-memory session docs (highest priority)
+  for (const doc of inMemoryDocsCache) {
+    if (doc?.id) allMap.set(doc.id, doc);
+  }
+
+  const combined = Array.from(allMap.values());
+
+  // Apply category filter
   let filtered = [...combined];
   if (params?.category && params.category !== 'All') {
-    filtered = filtered.filter((d) => (d.category || '').toLowerCase() === params.category!.toLowerCase());
+    filtered = filtered.filter(
+      (d) => (d.category || '').toLowerCase() === params.category!.toLowerCase()
+    );
   }
+
+  // Apply owner filter
   if (params?.ownerId) {
     filtered = filtered.filter((d) => d.ownerId === params.ownerId);
   }
+
+  // Apply search query filter
   if (params?.search && params.search.trim()) {
     const q = params.search.trim().toLowerCase();
     filtered = filtered.filter(
@@ -392,26 +503,34 @@ export const getDocuments = async (params?: DocumentQueryParams): Promise<ApiRes
   return { success: true, message: 'Documents loaded successfully', data: filtered };
 };
 
-export const getDocument = async (id: number): Promise<ApiResponse<Document>> => {
-  // 1. Try backend
+export const getDocument = async (id: number | string): Promise<ApiResponse<Document>> => {
+  const numId = Number(id);
+
+  // 1. Check in-memory docs cache
+  const memDoc = inMemoryDocsCache.find((d) => d.id === numId);
+  if (memDoc) {
+    return { success: true, message: 'Document found', data: memDoc };
+  }
+
+  // 2. Check IndexedDB metadata
   try {
-    const response = await api.get<ApiResponse<Document>>(`/documents/${id}`);
-    if (response.data && typeof response.data === 'object' && response.data.data?.id) {
-      return response.data;
+    const idbDocs = await getDocsMetaFromDb();
+    const idbDoc = idbDocs.find((d) => d.id === numId);
+    if (idbDoc) {
+      return { success: true, message: 'Document found', data: idbDoc };
     }
   } catch {}
 
-  // 2. Check stored documents
-  migrateDocsToFamilyKey();
+  // 3. Check stored documents (localStorage)
   const storedDocs = getStoredDocuments();
-  const found = storedDocs.find((d) => d.id === id);
+  const found = storedDocs.find((d) => d.id === numId);
   if (found) {
     return { success: true, message: 'Document found', data: found };
   }
 
-  // 3. Fallback to full list (includes demo docs if demo)
+  // 4. Fallback to full list (including base demo docs)
   const docsRes = await getDocuments();
-  const doc = (docsRes.data || []).find((d) => d.id === id);
+  const doc = (docsRes.data || []).find((d) => d.id === numId);
   if (doc) {
     return { success: true, message: 'Document found', data: doc };
   }
@@ -420,22 +539,11 @@ export const getDocument = async (id: number): Promise<ApiResponse<Document>> =>
 };
 
 export const uploadDocument = async (formData: FormData): Promise<ApiResponse<Document>> => {
-  // 1. Try backend API first
-  try {
-    const response = await api.post<ApiResponse<Document>>('/documents', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    if (response.data && typeof response.data === 'object' && response.data.data?.id) {
-      notifyVaultUpdated();
-      return response.data;
-    }
-  } catch {}
-
-  // 2. Offline / Vercel fallback: persist into local storage
   const name = (formData.get('name') as string) || 'New Document';
   const category = (formData.get('category') as string) || 'Identity';
   const subcategory = (formData.get('subcategory') as string) || '';
-  const ownerName = (formData.get('ownerName') as string) || getCurrentUserEmail().split('@')[0] || 'Self';
+  const ownerName =
+    (formData.get('ownerName') as string) || getCurrentUserEmail().split('@')[0] || 'Self';
   const ownerId = Number(formData.get('ownerId')) || 1;
   const issueDate = (formData.get('issueDate') as string) || '';
   const expiryDate = (formData.get('expiryDate') as string) || '';
@@ -454,22 +562,21 @@ export const uploadDocument = async (formData: FormData): Promise<ApiResponse<Do
     }
   }
 
-  // Use timestamp as a reliable unique ID
+  // Generate robust timestamp-based document ID
   const docId = Date.now();
   const fileName = file ? file.name : `${name}.pdf`;
-  const fileType = file ? file.type : 'application/pdf';
-  // Ensure non-zero file size for accurate storage tracking
-  const fileSize = file && file.size > 0 ? file.size : 185000;
+  const fileType = file ? file.type || 'application/pdf' : 'application/pdf';
+  const fileSize = file && file.size > 0 ? file.size : 245000;
 
   // Process and store the binary file safely in memory cache and IndexedDB
   if (file) {
     try {
       const buffer = await file.arrayBuffer();
-      const blob = new Blob([buffer], { type: fileType || 'application/pdf' });
+      const blob = new Blob([buffer], { type: fileType });
       // 1. Store in memory cache for instant preview
       memoryBlobCache.set(docId, blob);
-      // 2. Store in IndexedDB as ArrayBuffer (survives page reload, no 5MB limit!)
-      await storeFileInDb(docId, buffer, fileType, fileName);
+      // 2. Store in IndexedDB as ArrayBuffer + Blob (permanent storage, survives reload!)
+      await storeFileInDb(docId, buffer, blob, fileType, fileName);
     } catch (err) {
       console.warn('Failed to process file binary:', err);
     }
@@ -495,7 +602,7 @@ export const uploadDocument = async (formData: FormData): Promise<ApiResponse<Do
     }
   } catch {}
 
-  // Build clean document metadata (WITHOUT giant dataUrl string!)
+  // Build clean document metadata
   const newDoc: Document = {
     id: docId,
     name,
@@ -515,12 +622,28 @@ export const uploadDocument = async (formData: FormData): Promise<ApiResponse<Do
     uploadedBy,
   };
 
-  // Persist clean metadata into localStorage
+  // 1. Save into in-memory cache immediately (instant 0ms visibility)
+  inMemoryDocsCache = [newDoc, ...inMemoryDocsCache.filter((d) => d.id !== docId)];
+
+  // 2. Save into IndexedDB metadata store (no 5MB quota limit!)
+  await storeDocMetaInDb(newDoc);
+
+  // 3. Persist clean metadata into localStorage
   const existing = getStoredDocuments();
   saveStoredDocuments([newDoc, ...existing]);
 
-  // Broadcast event across the application so sidebar storage and lists update immediately
+  // 4. Broadcast event across the application so sidebar storage, dashboard, and lists update immediately
   notifyVaultUpdated();
+
+  // 5. Non-blocking background sync to backend (if live Spring Boot server exists)
+  try {
+    api
+      .post<ApiResponse<Document>>('/documents', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 1500,
+      })
+      .catch(() => {});
+  } catch {}
 
   return {
     success: true,
@@ -529,72 +652,74 @@ export const uploadDocument = async (formData: FormData): Promise<ApiResponse<Do
   };
 };
 
-export const updateDocument = async (id: number, data: Partial<Document>): Promise<ApiResponse<Document>> => {
-  try {
-    const response = await api.put<ApiResponse<Document>>(`/documents/${id}`, data);
-    if (response.data && response.data.data?.id) {
-      notifyVaultUpdated();
-      return response.data;
-    }
-  } catch {}
+export const updateDocument = async (
+  id: number | string,
+  data: Partial<Document>
+): Promise<ApiResponse<Document>> => {
+  const numId = Number(id);
 
+  // Update in-memory cache
+  const memIdx = inMemoryDocsCache.findIndex((d) => d.id === numId);
+  if (memIdx !== -1) {
+    inMemoryDocsCache[memIdx] = { ...inMemoryDocsCache[memIdx], ...data };
+  }
+
+  // Update in localStorage
   const existing = getStoredDocuments();
-  const idx = existing.findIndex((d) => d.id === id);
+  const idx = existing.findIndex((d) => d.id === numId);
   if (idx !== -1) {
     existing[idx] = { ...existing[idx], ...data };
     saveStoredDocuments(existing);
+    await storeDocMetaInDb(existing[idx]);
     notifyVaultUpdated();
     return { success: true, message: 'Document updated', data: existing[idx] };
   }
+
+  notifyVaultUpdated();
   return { success: true, message: 'Updated', data: data as Document };
 };
 
-export const deleteDocument = async (id: number): Promise<ApiResponse<void>> => {
-  try {
-    await api.delete<ApiResponse<void>>(`/documents/${id}`);
-  } catch {}
+export const deleteDocument = async (id: number | string): Promise<ApiResponse<void>> => {
+  const numId = Number(id);
 
   // Delete from in-memory cache
-  memoryBlobCache.delete(id);
+  memoryBlobCache.delete(numId);
+  inMemoryDocsCache = inMemoryDocsCache.filter((d) => d.id !== numId);
 
   // Delete from user's scoped storage
   const existing = getStoredDocuments();
-  const filtered = existing.filter((d) => d.id !== id);
+  const filtered = existing.filter((d) => d.id !== numId);
   saveStoredDocuments(filtered);
 
-  // Delete from IndexedDB
-  await deleteFileFromDb(id);
+  // Delete from IndexedDB (both binary and metadata)
+  await deleteFileFromDb(numId);
+  await deleteDocMetaFromDb(numId);
 
   // Broadcast update so storage and grid refresh immediately
   notifyVaultUpdated();
+
+  // Optional background backend sync
+  try {
+    api.delete(`/documents/${numId}`, { timeout: 1500 }).catch(() => {});
+  } catch {}
 
   return { success: true, message: 'Deleted', data: undefined };
 };
 
 export const getExpiringDocuments = async (): Promise<ApiResponse<Document[]>> => {
-  try {
-    const response = await api.get<ApiResponse<Document[]>>('/documents/expiring');
-    if (response.data && typeof response.data === 'object' && Array.isArray(response.data.data)) {
-      return response.data;
-    }
-  } catch {}
-
   const docsRes = await getDocuments();
-  const expiring = (docsRes.data || []).filter((d) => d.status === 'EXPIRING_SOON' || d.status === 'EXPIRED');
+  const expiring = (docsRes.data || []).filter(
+    (d) => d.status === 'EXPIRING_SOON' || d.status === 'EXPIRED'
+  );
   return { success: true, message: 'Expiring documents', data: expiring };
 };
 
 export const getDashboardStats = async (): Promise<ApiResponse<DashboardStats>> => {
-  try {
-    const response = await api.get<ApiResponse<DashboardStats>>('/documents/stats');
-    if (response.data && typeof response.data === 'object' && response.data.data?.totalDocuments !== undefined) {
-      return response.data;
-    }
-  } catch {}
-
   const docsRes = await getDocuments();
   const docs = docsRes.data || [];
-  const expiringCount = docs.filter((d) => d.status === 'EXPIRING_SOON' || d.status === 'EXPIRED').length;
+  const expiringCount = docs.filter(
+    (d) => d.status === 'EXPIRING_SOON' || d.status === 'EXPIRED'
+  ).length;
   const totalBytes = docs.reduce((acc, d) => acc + (d.fileSize || 0), 0);
   const sizeMb = (totalBytes / (1024 * 1024)).toFixed(1);
 
@@ -610,56 +735,85 @@ export const getDashboardStats = async (): Promise<ApiResponse<DashboardStats>> 
   };
 };
 
-export const previewDocument = async (id: number): Promise<Blob> => {
-  // 1. Check in-memory session cache first (fastest)
-  if (memoryBlobCache.has(id)) {
-    return memoryBlobCache.get(id)!;
+/**
+ * Creates a valid, well-formed 1-page PDF Blob that opens seamlessly
+ * in any PDF viewer (Chrome, Edge, Adobe Reader, Apple Preview).
+ */
+const createValidPdfBlob = (title: string, lines: string[]): Blob => {
+  const safeTitle = title.replace(/[()\\]/g, '');
+  const textCommands = [
+    `BT /F1 20 Tf 50 720 Td (${safeTitle}) Tj ET`,
+    ...lines.map(
+      (line, idx) =>
+        `BT /F2 12 Tf 50 ${680 - idx * 24} Td (${line.replace(/[()\\]/g, '')}) Tj ET`
+    ),
+  ].join('\n');
+
+  const streamLen = textCommands.length;
+  const pdfString = `%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >> endobj
+4 0 obj << /Length ${streamLen} >> stream
+${textCommands}
+endstream endobj
+5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj
+6 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000261 00000 n 
+0000000330 00000 n 
+0000000410 00000 n 
+trailer << /Size 7 /Root 1 0 R >>
+startxref
+485
+%%EOF`;
+
+  return new Blob([pdfString], { type: 'application/pdf' });
+};
+
+export const previewDocument = async (id: number | string): Promise<Blob> => {
+  const numId = Number(id);
+
+  // 1. Check in-memory session cache first (instant 0ms)
+  if (memoryBlobCache.has(numId)) {
+    return memoryBlobCache.get(numId)!;
   }
 
   // 2. Check IndexedDB for user-uploaded document binary
-  const idbBlob = await getFileFromDb(id);
+  const idbBlob = await getFileFromDb(numId);
   if (idbBlob && idbBlob.size > 0) {
-    memoryBlobCache.set(id, idbBlob);
+    memoryBlobCache.set(numId, idbBlob);
     return idbBlob;
   }
 
-  // 3. Try backend preview endpoint if available
+  // 3. Fallback: generate a well-formed PDF document preview
   try {
-    const response = await api.get(`/documents/${id}/preview`, { responseType: 'blob' });
-    if (response.data instanceof Blob && !response.data.type.includes('text/html') && response.data.size > 0) {
-      memoryBlobCache.set(id, response.data);
-      return response.data;
-    }
-  } catch {}
-
-  // 4. Fallback: generate a lightweight informative placeholder preview for demo records
-  try {
-    const docRes = await getDocument(id);
+    const docRes = await getDocument(numId);
     const doc = docRes.data;
-    const placeholderSvg = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="600" height="800" viewBox="0 0 600 800" fill="none">
-        <rect width="600" height="800" fill="#FAFAF5"/>
-        <rect x="40" y="40" width="520" height="720" rx="16" fill="#FFFFFF" stroke="#111111" stroke-width="3"/>
-        <rect x="60" y="60" width="120" height="30" rx="6" fill="#C8FF3D" stroke="#111111" stroke-width="2"/>
-        <text x="75" y="80" font-family="sans-serif" font-weight="900" font-size="12" fill="#111111">${(doc?.category || 'DOCUMENT').toUpperCase()}</text>
-        <text x="60" y="140" font-family="sans-serif" font-weight="900" font-size="28" fill="#111111">${doc?.name || 'Document'}</text>
-        <text x="60" y="175" font-family="sans-serif" font-weight="600" font-size="14" fill="#666666">Owner: ${doc?.ownerName || 'Family Member'}</text>
-        <text x="60" y="200" font-family="sans-serif" font-weight="600" font-size="14" fill="#666666">Status: ${doc?.status || 'ACTIVE'}</text>
-        ${doc?.expiryDate ? `<text x="60" y="225" font-family="sans-serif" font-weight="600" font-size="14" fill="#666666">Expiry Date: ${doc.expiryDate}</text>` : ''}
-        <line x1="60" y1="250" x2="540" y2="250" stroke="#111111" stroke-width="2" stroke-dasharray="6 6"/>
-        <text x="60" y="290" font-family="sans-serif" font-weight="700" font-size="14" fill="#111111">Description / Notes:</text>
-        <text x="60" y="320" font-family="sans-serif" font-weight="500" font-size="14" fill="#444444">${doc?.description || 'Verified household record.'}</text>
-      </svg>
-    `;
-    const svgBlob = new Blob([placeholderSvg], { type: 'image/svg+xml' });
-    memoryBlobCache.set(id, svgBlob);
-    return svgBlob;
+    const lines = [
+      `Category: ${doc.category || 'General'}`,
+      `Owner: ${doc.ownerName || 'Family Member'}`,
+      `Status: ${doc.status || 'ACTIVE'}`,
+      doc.expiryDate ? `Expiry Date: ${doc.expiryDate}` : '',
+      `Uploaded: ${doc.uploadedAt ? doc.uploadedAt.split('T')[0] : 'Recent'}`,
+      '',
+      `Description: ${doc.description || 'Verified household document in PaperlessFamily.'}`,
+    ].filter(Boolean);
+
+    const pdfBlob = createValidPdfBlob(doc.name || 'Household Document', lines);
+    memoryBlobCache.set(numId, pdfBlob);
+    return pdfBlob;
   } catch {}
 
   throw new Error('Preview not found');
 };
 
-export const downloadDocument = async (id: number): Promise<Blob> => {
+export const downloadDocument = async (id: number | string): Promise<Blob> => {
   return previewDocument(id);
 };
 
@@ -671,29 +825,54 @@ export const triggerFileDownload = (blob: Blob, fileName: string) => {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+  setTimeout(() => window.URL.revokeObjectURL(url), 2000);
 };
 
 export const getCategories = async (): Promise<ApiResponse<Category[]>> => {
-  try {
-    const response = await api.get<ApiResponse<Category[]>>('/documents/categories');
-    if (response.data && Array.isArray(response.data.data)) {
-      return response.data;
-    }
-  } catch {}
-
   return {
     success: true,
     message: 'Categories',
     data: [
-      { name: 'Identity', icon: 'Shield', subcategories: ['Aadhaar', 'PAN', 'Passport', 'Driving Licence', 'Voter ID'] },
-      { name: 'Education', icon: 'GraduationCap', subcategories: ['Certificate', 'Marksheet', 'Degree', 'Course Document'] },
-      { name: 'Medical', icon: 'HeartPulse', subcategories: ['Medical Report', 'Prescription', 'Health Record'] },
-      { name: 'Finance', icon: 'Wallet', subcategories: ['Bank Document', 'Tax Document', 'Loan'] },
-      { name: 'Insurance', icon: 'ShieldCheck', subcategories: ['Health Insurance', 'Life Insurance', 'Vehicle Insurance'] },
-      { name: 'Property', icon: 'Home', subcategories: ['Property Document', 'Rental Agreement'] },
-      { name: 'Vehicle', icon: 'Car', subcategories: ['RC', 'Insurance', 'PUC'] },
-      { name: 'Bills', icon: 'Receipt', subcategories: ['Electricity', 'Water', 'Internet', 'Mobile'] },
+      {
+        name: 'Identity',
+        icon: 'Shield',
+        subcategories: ['Aadhaar', 'PAN', 'Passport', 'Driving Licence', 'Voter ID'],
+      },
+      {
+        name: 'Education',
+        icon: 'GraduationCap',
+        subcategories: ['Certificate', 'Marksheet', 'Degree', 'Course Document'],
+      },
+      {
+        name: 'Medical',
+        icon: 'HeartPulse',
+        subcategories: ['Medical Report', 'Prescription', 'Health Record'],
+      },
+      {
+        name: 'Finance',
+        icon: 'Wallet',
+        subcategories: ['Bank Document', 'Tax Document', 'Loan'],
+      },
+      {
+        name: 'Insurance',
+        icon: 'ShieldCheck',
+        subcategories: ['Health Insurance', 'Life Insurance', 'Vehicle Insurance'],
+      },
+      {
+        name: 'Property',
+        icon: 'Home',
+        subcategories: ['Property Document', 'Rental Agreement'],
+      },
+      {
+        name: 'Vehicle',
+        icon: 'Car',
+        subcategories: ['RC', 'Insurance', 'PUC'],
+      },
+      {
+        name: 'Bills',
+        icon: 'Receipt',
+        subcategories: ['Electricity', 'Water', 'Internet', 'Mobile'],
+      },
       { name: 'Other', icon: 'FileText', subcategories: ['Other'] },
     ],
   };

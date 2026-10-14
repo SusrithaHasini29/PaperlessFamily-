@@ -8,7 +8,7 @@ import {
   File,
   Image as ImageIcon,
 } from 'lucide-react';
-import { FamilyMember } from '../types';
+import { FamilyMember, Document } from '../types';
 import * as documentService from '../services/documentService';
 import * as familyService from '../services/familyService';
 import { useAuth } from '../contexts/AuthContext';
@@ -32,7 +32,7 @@ const CATEGORIES = Object.keys(CATEGORY_SUBCATEGORIES);
 interface UploadModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess?: () => void;
+  onSuccess?: (newDoc?: Document) => void;
   defaultCategory?: string;
 }
 
@@ -199,16 +199,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
     try {
       setUploadProgress(60);
-      await documentService.uploadDocument(formData);
+      const res = await documentService.uploadDocument(formData);
       setUploadProgress(100);
       toast.success('Document uploaded successfully to the vault!');
 
       setTimeout(() => {
         setIsUploading(false);
         resetForm();
-        if (onSuccess) onSuccess();
+        if (onSuccess) onSuccess(res.data);
         onClose();
-      }, 200);
+      }, 150);
     } catch (err: any) {
       setIsUploading(false);
       setUploadProgress(0);

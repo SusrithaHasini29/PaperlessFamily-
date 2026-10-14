@@ -65,6 +65,7 @@ export const Documents: React.FC = () => {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
   const [documentToDelete, setDocumentToDelete] = useState<Document | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [highlightedDocId, setHighlightedDocId] = useState<number | null>(null);
 
   // Sync from query params if navigated with filter or action
   useEffect(() => {
@@ -447,6 +448,7 @@ export const Documents: React.FC = () => {
             <DocumentCard
               key={doc.id}
               document={doc}
+              isHighlighted={doc.id === highlightedDocId}
               onView={(d) => navigate(`/documents/${d.id}`)}
               onDelete={(d) => setDocumentToDelete(d)}
               onDownload={handleDownload}
@@ -458,8 +460,22 @@ export const Documents: React.FC = () => {
       {/* Modals */}
       <UploadModal
         isOpen={isUploadModalOpen}
-        onClose={() => setIsUploadModalOpen(false)}
-        onSuccess={() => {
+        onClose={() => {
+          setIsUploadModalOpen(false);
+          if (searchParams.get('action') === 'upload') {
+            navigate('/documents', { replace: true });
+          }
+        }}
+        onSuccess={(uploadedDoc) => {
+          // Immediately reset all filters so newly uploaded document is 100% visible
+          setActiveTab('All');
+          setSearchQuery('');
+          navigate('/documents', { replace: true });
+          if (uploadedDoc) {
+            setDocuments((prev) => [uploadedDoc, ...prev.filter((d) => d.id !== uploadedDoc.id)]);
+            setHighlightedDocId(uploadedDoc.id);
+            setTimeout(() => setHighlightedDocId(null), 6000);
+          }
           fetchDocuments();
           setIsUploadModalOpen(false);
         }}

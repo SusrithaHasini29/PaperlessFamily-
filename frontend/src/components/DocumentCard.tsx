@@ -41,6 +41,7 @@ interface DocumentCardProps {
   onView?: (document: Document) => void;
   onDelete?: (document: Document) => void;
   onDownload?: (document: Document) => void;
+  isHighlighted?: boolean;
   className?: string;
 }
 
@@ -49,6 +50,7 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
   onView,
   onDelete,
   onDownload,
+  isHighlighted = false,
   className = '',
 }) => {
   const catKey = (document.category || '').toLowerCase();
@@ -63,9 +65,17 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
   return (
     <div
       onClick={handleCardClick}
-      className={`neo-box-interactive p-4 sm:p-5 bg-white cursor-pointer flex flex-col justify-between group ${className}`}
+      className={`neo-box-interactive p-4 sm:p-5 bg-white cursor-pointer flex flex-col justify-between group transition-all ${
+        isHighlighted ? 'ring-4 ring-lime border-2 border-black bg-lime/10 shadow-neo-lg' : ''
+      } ${className}`}
     >
       <div>
+        {isHighlighted && (
+          <div className="mb-2 px-2 py-0.5 bg-lime text-black border border-black rounded text-[10px] font-black uppercase tracking-wider inline-flex items-center gap-1">
+            <span>★</span>
+            <span>JUST UPLOADED TO VAULT</span>
+          </div>
+        )}
         {/* Top row: Category tag, Icon, Status badge */}
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="flex items-center gap-2">
